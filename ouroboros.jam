@@ -1,0 +1,37 @@
+# file descriptors
+stdout_loopback=4
+stderr_loopback=5
+debug=6
+
+#exec $stdout_loopback<&-
+#exec $stderr_loopback<&-
+#exec $debug>&-
+#exit 0
+
+function jam_stdout {
+  local stdout
+  echo -n $'\4'
+  IFS= read -r -d $'\4' -u $stdout_loopback stdout
+  printf '(bash) read stdout: %s' "$stdout" >&$debug
+  printf '%s' "$stdout"
+}
+
+function jam_stderr {
+  local stderr
+  echo -n $'\4' >&2
+  IFS= read -r -d $'\4' -u $stderr_loopback stderr
+  printf '(bash) read stderr: %s\n' "$stderr" >&$debug
+  printf '%s' "$stderr"
+}
+
+echo hi
+echo bye
+jam_stdout
+
+echo one
+echo two
+jam_stdout
+
+#exec $stdout_loopback<&-
+#exec $stderr_loopback<&-
+#exec $debug>&-
