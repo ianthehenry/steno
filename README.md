@@ -7,10 +7,9 @@ The main reason I wrote `jam` when `cram` already exists is that `cram` is a Pyt
     - `cram` requires that you delimit each individual command in separate `$`/`>` blocks. `jam` does not.
     - `jam` uses specially-formatted comments to indicate output.
 - `jam` differentiates between stdout and stderr in its output.
-- `jam` does not have built-in `(regex)` or `(glob)` fuzzy line matchers, but does have some other niceties explained below.
+- `jam` does not have built-in `(regex)` or `(glob)` fuzzy matchers.
 - `jam` scripts are always `bash` scripts; you cannot configure the shell you use like you can in `cram`.
     - `jam` uses the non-portable `PIPESTATUS` to report multiple exit codes.
-    - `jam` uses `BASH_XTRACEFD` to trace the exit codes for individual commands.
 
 # Example
 
@@ -44,16 +43,15 @@ echo hi
 echo bye
 ```
 
-The actual stdout of that the script is:
+The actual stdout of that the script is something like:
 
 ```
-<start token>hi
-<end token>
-<start token>bye
-<end token>
+hi
+<random byte sequence 1>
+bye
 ```
 
-Except that `<start token>` and `<end token>` are special.
+`jam` parses this output to determine where one "block" ends and the other begins.
 
 ```
 ##        - explicitly indicates that there is no output
@@ -65,22 +63,28 @@ Except that `<start token>` and `<end token>` are special.
 #? 1 0 1  - multiple exit codes follow pipes
 ```
 
-If you want to distinguish lines with newlines, use `#=|`. `#=|` will print whitespace characters and control characters as escape codes. For example:
+If you care about distinguishing lines with newlines, use `#=|`. `#=|` will print whitespace characters as C-style escape codes. For example:
 
 ```bash
+echo -n first
+#| first
+echo second
+#| second
+echo -n second
+#| third
+
+echo -n first
+#=| first\n
+echo second
+#=| second
+echo -n second
+#=| third\n
+
 echo -n first
 echo second
 echo -n second
 #| first
-#| second
-#| third
-
-echo -n first
-echo second
-echo -n second
-#=| first\n
-#=| second
-#=| third\n
+#| secondthird
 ```
 
 You can also use `#=|` to see ANSI escape sequences, which are otherwise filtered out of the output.
@@ -99,45 +103,48 @@ You can also use `#~|` to see a "prettified" version of output, that replaces co
 
 # Exit codes
 
-```bash
-echo -n first
-echo second
-echo -n second
-#| first
-#| second
-#| third
+The following script:
 
-echo -n first
-echo second
-echo -n second
-#=| first\n
-#=| second
-#=| third\n
+```bash
+true
+false
+true
 ```
 
-By default `jam` will insert.
+Will become:
+
+```bash
+true
+false
+#? 1
+true
+```
+
+`jam` will automatically insert `#?` when statements exit non-zero. (It does this by setting an `ERR` trap at the beginning of your script.)
+
+# Maybe
 
 This is a special syntax:
 
+```
 ### something.txt
 hello
 this is something
 the end
 ###
+```
 
 This is equivalent to:
 
+```
 cat >something.txt <<'EOF'
 hello
 this is something
 the end
 'EOF'
+```
 
 Although note that, if you use this syntax, your `jam` scripts can no longer be executed as regular `bash` scripts. It's up to you to decide whether or not you care about that.
-
----
-
-By default `jam` does not set `-e`, so a script will keep going the failure of any subcommand... somehow.
 
 # Execution model
 
