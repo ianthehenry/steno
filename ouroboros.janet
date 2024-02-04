@@ -42,15 +42,14 @@
     (ev/write to sanitized)))
 
 (defn main [&]
-  (def [stdout-reader stdout-writer] (posix-spawn/pipe))
-  #(def [stdout-reader stdout-writer] (os/pipe 1))
-  (def [stdout-loopback-reader stdout-loopback-writer] (os/pipe 2))
+  (def [stdout-reader stdout-writer] (posix-spawn/pipe :read-stream))
+  (def [stdout-loopback-reader stdout-loopback-writer] (posix-spawn/pipe :write-stream))
 
   # this is useful
-  (def [stderr-reader stderr-writer] (posix-spawn/pipe))
+  (def [stderr-reader stderr-writer] (posix-spawn/pipe :read-stream))
 
-  (def [stderr-loopback-reader stderr-loopback-writer] (os/pipe 2))
-  (def [debug-reader debug-writer] (posix-spawn/pipe))
+  (def [stderr-loopback-reader stderr-loopback-writer] (posix-spawn/pipe :write-stream))
+  (def [debug-reader debug-writer] (posix-spawn/pipe :read-stream))
 
   (def proc
     (posix-spawn/spawn2 ["/bin/bash" "ouroboros.jam"]
