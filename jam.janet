@@ -1,5 +1,6 @@
 (import ./posix-spawn/posix-spawn)
 (import pat)
+(import cmd)
 (use judge)
 (use ./util)
 
@@ -93,6 +94,7 @@ echo -n hello
   @[[:source @[["echo hi" 1]]]
     [:expectation
      {:err @[" hello"]
+      :explicit true
       :out @[" hi" " bye"]
       :status @[" 0"]}]])
 
@@ -101,22 +103,29 @@ echo -n hello
      @[["echo hi" 1] ["echo hello" 2]]]
     [:expectation
      {:err @[]
+      :explicit true
       :out @[" hi" " hello"]
       :status @[nil]}]
     [:source
      @[["echo -n hi" 5] ["echo -n hello" 6]]]
     [:expectation
      {:err @[]
+      :explicit true
       :out @[" hihello"]
       :status @[nil]}]])
 
 # each expectation gets a unique identifier
 
-(defn compile-script [source]
+(defn escape-bytes [bytes] (string/join (seq [byte :in bytes] (string/format "\\x%02x" byte))))
+
+(test (escape-bytes "\x01\x02\x03") "\\x01\\x02\\x03")
+
+(defn compile-script [source rng]
   (var next-id 0)
   (def stanzas (parse-script source))
   (array/push stanzas [:expectation {:err @[] :out @[] :status (ref/new nil) :explicit false}])
 
+  (def random-bytes (math/rng-buffer rng 8))
   (def expectations @{})
 
   (def lines
@@ -124,34 +133,87 @@ echo -n hello
       (pat/match stanza
         [:source lines] (map 0 lines)
         [:expectation expectation] (do
-          (def id next-id)
-          (++ next-id)
+          (def id (post++ next-id))
           (put expectations id expectation)
-          [(string/format "printf '<done %d>'; printf '<done %d>' >&2" id id)]))))
+          (def tag (buffer/push-word (clone random-bytes) id))
+          [(string/format "printf '%s'; printf '%s' >&2" (escape-bytes tag) (escape-bytes tag))]))))
 
-  [expectations (string/join lines "\n")])
+  {:expectations expectations
+   :script (string/join lines "\n")
+   :separator (string random-bytes)})
 
-(test (compile-script example2)
-  @["echo hi"
-    "echo hello"
-    "printf '--done--'; printf '--done--' >&2"
-    "echo -n hi"
-    "echo -n hello"
-    "printf '--done--'; printf '--done--' >&2"])
+(defn sanitize [{:expectations expectations :script script :separator separator}]
+  (print (string/replace-all (escape-bytes separator) "<sep>" script))
+  expectations)
 
-(defn main [&]
+(test-stdout (sanitize (compile-script example2 (math/rng))) `
+  echo hi
+  echo hello
+  printf '<sep>\x00\x00\x00\x00'; printf '<sep>\x00\x00\x00\x00' >&2
+  echo -n hi
+  echo -n hello
+  printf '<sep>\x01\x00\x00\x00'; printf '<sep>\x01\x00\x00\x00' >&2
+  printf '<sep>\x02\x00\x00\x00'; printf '<sep>\x02\x00\x00\x00' >&2
+`
+  @{0 {:err @[]
+       :explicit true
+       :out @[" hi" " hello"]
+       :status @[nil]}
+    1 {:err @[]
+       :explicit true
+       :out @[" hihello"]
+       :status @[nil]}
+    2 {:err @[]
+       :explicit false
+       :out @[]
+       :status @[nil]}})
+
+(defn parse-actuals [separator output errput]
+  (def results-peg (peg/compile ~(some (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
+  (def results @{})
+  (defn get-result [tag]
+    (get-or-put results tag {:errs @[] :outs @[] :status (ref/new nil)}))
+
+  (each [tag text] (peg/match results-peg output)
+    (table/push (get-result tag) :outs text))
+
+  (each [tag text] (peg/match results-peg errput)
+    (table/push (get-result tag) :errs text))
+
+  results)
+
+(test (parse-actuals "<sep>" "
+hi\n
+hello\n
+<sep>\x00\x00\x00\x00bye then\n
+<sep>\x01\x00\x00\x00" "<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00")
+  @{0 {:errs @[""]
+       :outs @["hi\nhello\n"]
+       :status @[nil]}
+    1 {:errs @[""]
+       :outs @["bye then\n"]
+       :status @[nil]}})
+
+(defn await-exit [proc]
+  (while (= nil (proc :exit-code))
+    (ev/sleep 0.001)))
+
+(cmd/main (cmd/fn [file :file]
   (def [source-reader source-writer] (posix-spawn/pipe :write-stream))
   (def [stdout-reader stdout-writer] (posix-spawn/pipe :read-stream))
   (def [stderr-reader stderr-writer] (posix-spawn/pipe :read-stream))
   (def [trace-reader trace-writer] (posix-spawn/pipe :read-stream))
   (def [debug-reader debug-writer] (posix-spawn/pipe :read-stream))
 
-  (def env @{})
-
-  (def bash-source (slurp "test.jam"))
+  (def bash-source (slurp file))
 
   # I don't understand why I need to [:close source-writer].
   # Shouldn't CLOEXEC take care of that for me?
+  (def env @{
+    "JAM_DEBUG_FD" "5"
+    "JAM_TRACE" "eval BASH_XTRACEFD=$JAM_DEBUG_FD; set -x"
+    "JAM_LOG" "eval echo >&$JAM_DEBUG_FD"
+    })
   (def proc
     (posix-spawn/spawn2 ["bash" ;bash-options "/dev/fd/6"]
     {:cmd "bash"
@@ -170,18 +232,12 @@ echo -n hello
   (file/close debug-writer)
 
   (ev/write source-writer prelude)
-  (def [expectations compiled-source] (compile-script bash-source))
-  (print compiled-source)
-  (print "---")
+  (def {:expectations expectations
+        :script compiled-source
+        :separator separator}
+    (compile-script bash-source (math/rng (os/time))))
   (ev/write source-writer compiled-source)
-  # TODO: we need to print a terminator here
   (ev/close source-writer)
-
-  (ev/spawn
-    (while true
-      (def chunk (ev/read debug-reader 1024))
-      (unless chunk (break))
-      (printf "debug: %s" chunk)))
 
   (def trace-buf @"")
   (def stdout-buf @"")
@@ -189,19 +245,21 @@ echo -n hello
   (ev/spawn (while (ev/read trace-reader 1024 trace-buf)))
   (ev/spawn (while (ev/read stdout-reader 1024 stdout-buf)))
   (ev/spawn (while (ev/read stderr-reader 1024 stderr-buf)))
+  (ev/spawn (while-let [chunk (ev/read debug-reader 1024)] (eprin chunk)))
 
-  (while true
-    (case (proc :exit-code)
-      nil (ev/sleep 0.001)
-      (do
-        (print "process exited")
-        (break))))
+  (await-exit proc)
 
-  (printf "exited %d" (proc :exit-code))
-  (print "trace:")
-  (pp trace-buf)
-  (print "stdout:")
-  (pp stdout-buf)
-  (print "stderr:")
-  (pp stderr-buf)
-  )
+  (pp expectations)
+  (pp (parse-actuals separator stdout-buf stderr-buf))
+
+  # okay, now we parse the line failures and insert new expectations wherever necessary...
+  # then we collapse adjacent expectations, i guess
+
+  # afterwards, group all of the expectations by their ID
+  # and error if we get inconsistent results for any expectation...
+  # ...or if there's any expectation we fail to execute
+
+  # then we produce the final output
+  # ...and diff it against the original source
+  # if there's any difference, we fail.
+  ))
