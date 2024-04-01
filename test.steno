@@ -1,3 +1,6 @@
+$STENO_TRACE
+$STENO_LOG hello
+
 echo hi
 false
 echo bye

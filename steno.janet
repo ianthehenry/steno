@@ -5,10 +5,10 @@
 (use ./util)
 
 (def prelude `
-jam_error () {
+steno_error () {
   printf '%s %s [%s]\0' "$1" "$2" "$3" >&4
 }
-trap 'jam_error "$LINENO" "$?" "${PIPESTATUS[*]}"' ERR
+trap 'steno_error "$LINENO" "$?" "${PIPESTATUS[*]}"' ERR
 
 `)
 
@@ -210,9 +210,9 @@ hello\n
   # I don't understand why I need to [:close source-writer].
   # Shouldn't CLOEXEC take care of that for me?
   (def env @{
-    "JAM_DEBUG_FD" "5"
-    "JAM_TRACE" "eval BASH_XTRACEFD=$JAM_DEBUG_FD; set -x"
-    "JAM_LOG" "eval echo >&$JAM_DEBUG_FD"
+    "STENO_DEBUG_FD" "5"
+    "STENO_TRACE" "eval BASH_XTRACEFD=$STENO_DEBUG_FD; set -x"
+    "STENO_LOG" "eval echo >&$STENO_DEBUG_FD"
     })
   (def proc
     (posix-spawn/spawn2 ["bash" ;bash-options "/dev/fd/6"]

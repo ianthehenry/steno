@@ -34,10 +34,19 @@
   (array/push (get-or-put t 0 @[]) :b)
   (test t @{0 @[:a :b]}))
 
-(defn table/push [tab k v]
-  (if-let [arr (in tab k)]
+(defn table/push [t k v]
+  (if-let [arr (in t k)]
     (array/push arr v)
-    (put tab k @[v])))
+    (put t k @[v])))
+
+(deftest "table/push"
+  (def t @{})
+  (table/push t :foo 1)
+  (test t @{:foo @[1]})
+  (table/push t :foo 2)
+  (test t @{:foo @[1 2]})
+  (table/push t :bar 3)
+  (test t @{:bar @[3] :foo @[1 2]}))
 
 (defmacro while-let [bindings & body]
   ~(forever (if-let ,bindings
