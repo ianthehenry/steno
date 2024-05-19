@@ -5,8 +5,6 @@
 (defn ref/get [ref] (ref 0))
 (defn ref/update [ref f] (ref/set ref (f (ref/get ref))))
 
-(defn clone [buf] (buffer buf))
-
 (defmacro post++ [x]
   (with-syms [$x]
     ~(let [,$x ,x]
@@ -52,3 +50,17 @@
   ~(forever (if-let ,bindings
     (do ,;body)
     (break))))
+
+(defmacro lazy [& body]
+  (with-syms [$f $forced? $result]
+    ~(do
+      (def ,$f (fn [] ,;body))
+      (var ,$forced? false)
+      (var ,$result nil)
+      (fn []
+        (unless ,$forced?
+          (set ,$result (,$f))
+          (set ,$forced? true))
+        ,$result))))
+
+(defn ignore [_])
