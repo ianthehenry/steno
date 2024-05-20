@@ -71,6 +71,9 @@ echo -n hello
     [:stdout " hihello"]
     [:empty ""]])
 
+(defn expectation/new [&named explicit]
+  @{:err @[] :out @[] :status (ref/new nil) :explicit explicit})
+
 (defn parse-script [source]
   (def finished-states @[])
   (var state [:source @[]])
@@ -84,7 +87,7 @@ echo -n hello
       [:source :source] nil
       [:expectation :source] (transition [:source @[]])
       [:expectation _] nil
-      [:source _] (transition [:expectation {:err @[] :out @[] :status (ref/new nil) :explicit true}]))
+      [:source _] (transition [:expectation (expectation/new :explicit true)]))
 
     (pat/match [line state]
       [[:source line line-number] [:source lines]]
@@ -129,57 +132,67 @@ echo -n hello
 (defn compile-script [source separator]
   (var next-id 0)
   (def stanzas (parse-script source))
-  (array/push stanzas [:expectation {:err @[] :out @[] :status (ref/new nil) :explicit false}])
+  (array/push stanzas [:expectation (expectation/new :explicit false)])
 
   (def expectations @{})
+  (def ordered @[])
 
   (def lines (catseq [stanza :in stanzas]
     (pat/match stanza
-      [:source lines] (map 0 lines)
+      [:source lines] (do
+        # TODO: why am I parsing the original line?
+        (def lines (map 0 lines))
+        (array/concat ordered lines)
+        lines)
       [:expectation expectation] (do
         (def id (post++ next-id))
         (put expectations id expectation)
         # TODO: is there some guarantee that push-word always pushes a 32-bit int?
         (def tag (buffer/push-word (buffer separator) id))
+        (array/push ordered expectation)
         [(string/format "printf '%s'; printf '%s' >&2" (escape-bytes tag) (escape-bytes tag))]))))
 
   {:expectations expectations
+   :ordered ordered
    :lines lines})
 
-(defn show-result [{:expectations expectations :lines lines}]
-  (each line lines
-    (print line))
-  expectations)
-
-# the separator gets escaped, even if it's ascii, so I'm using something
-# recognizable in hex instead of something like <sep>
-(test-stdout (show-result (compile-script example2 "\xff")) `
-  echo hi
-  echo hello
-  printf '\xff\x00\x00\x00\x00'; printf '\xff\x00\x00\x00\x00' >&2
-  echo -n hi
-  echo -n hello
-  printf '\xff\x01\x00\x00\x00'; printf '\xff\x01\x00\x00\x00' >&2
-  printf '\xff\x02\x00\x00\x00'; printf '\xff\x02\x00\x00\x00' >&2
-`
-  @{0 {:err @[]
+(deftest compile-script
+  # the separator gets escaped, even if it's ascii, so I'm using something
+  # recognizable in hex instead of something like <sep>
+  (def {:ordered ordered :expectation expectation :lines lines} (compile-script example2 "\xff"))
+  (test expectation nil)
+  (test-stdout (each line lines (print line)) `
+    echo hi
+    echo hello
+    printf '\xff\x00\x00\x00\x00'; printf '\xff\x00\x00\x00\x00' >&2
+    echo -n hi
+    echo -n hello
+    printf '\xff\x01\x00\x00\x00'; printf '\xff\x01\x00\x00\x00' >&2
+    printf '\xff\x02\x00\x00\x00'; printf '\xff\x02\x00\x00\x00' >&2
+  `)
+  (test ordered
+    @["echo hi"
+      "echo hello"
+      {:err @[]
        :explicit true
        :out @[" hi" " hello"]
        :status @[nil]}
-    1 {:err @[]
+      "echo -n hi"
+      "echo -n hello"
+      {:err @[]
        :explicit true
        :out @[" hihello"]
        :status @[nil]}
-    2 {:err @[]
+      {:err @[]
        :explicit false
        :out @[]
-       :status @[nil]}})
+       :status @[nil]}]))
 
 (defn parse-actuals [separator output errput]
   (def results-peg (peg/compile ~(some (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
   (def results @{})
   (defn get-result [tag]
-    (get-or-put results tag {:errs @[] :outs @[] :status (ref/new nil)}))
+    (get-or-put results tag {:errs @[] :outs @[]}))
   (each [tag text] (peg/match results-peg output)
     (table/push (get-result tag) :outs text))
   (each [tag text] (peg/match results-peg errput)
@@ -252,8 +265,8 @@ hello\n
         [:close stderr] [:dup2 stderr-writer stderr] [:close stderr-writer] [:close stderr-reader]
         [:dup2 trace-writer 4] [:close trace-writer] [:close trace-reader]
         [:dup2 debug-writer 5] [:close debug-writer] [:close debug-reader]]
-      :env (table/proto-flatten env)
-      }))
+     :env (table/proto-flatten env)
+     }))
   (file/close source-reader)
   (file/close stdout-writer)
   (file/close stderr-writer)
@@ -300,6 +313,7 @@ hello\n
 (defn transcribe [source &named on-debug]
   (def separator (make-separator))
   (def {:expectations expectations
+        :ordered ordered
         :lines compiled-script-lines}
     (compile-script source separator))
 
@@ -307,9 +321,64 @@ hello\n
         :stderr-buf stderr-buf
         :trace-buf trace-buf}
     (transcribe-raw (string/join compiled-script-lines "\n") :on-debug on-debug))
-  {:expected expectations
+  {:expectations expectations
    :actual (parse-actuals separator stdout-buf stderr-buf)
    :traced (parse-trace-output trace-buf)})
+
+# oh shoot, i need to know the level
+# of indentation of the preceding line
+# or of the lines we're correcting or something
+(defn print-lines-prefixed [prefix str]
+  (def lines (string/split "\n" str))
+  (defn last? [i]
+    (= i (dec (length lines))))
+  (seq [[i line] :pairs lines
+        :unless (and (empty? line) (last? i))]
+    (prin prefix)
+    (unless (empty? line)
+      (prin " "))
+    (print line)))
+
+(defn render [ordered]
+  (each entry ordered
+    (cond
+      (string? entry) (print entry)
+      (let [{:actual-err err :actual-out out :explicit explicit} entry]
+        (unless (empty? out)
+          (print-lines-prefixed "#|" out))
+        (unless (empty? err)
+          (print-lines-prefixed "#!" err))
+        # TODO: also status
+        (when (and explicit (empty? out) (empty? err))
+          (print "#-"))
+        ))))
+
+(defn reconcile [source &named on-debug]
+  (def separator (make-separator))
+  (def {:expectations expectations
+        :ordered ordered
+        :lines compiled-script-lines}
+    (compile-script source separator))
+
+  (def {:stdout-buf stdout-buf
+        :stderr-buf stderr-buf
+        :trace-buf trace-buf}
+    (transcribe-raw (string/join compiled-script-lines "\n") :on-debug on-debug))
+
+  (def actual (parse-actuals separator stdout-buf stderr-buf))
+  (def traced (parse-trace-output trace-buf))
+
+  # do i actually even need to parse the "expecteds"? of course i do if i want to make, like,
+  # my own interactive differ or whatever... but if i just shell out to cmp, do i need that
+  # at all?
+  (eachp [id {:errs errs :outs outs}] actual
+    (def expectation (assert (in expectations id) "unknown expectation ID"))
+    # TODO: this should really fail with a better error message
+    (put expectation :actual-out (unique outs))
+    (put expectation :actual-err (unique errs)))
+
+  (render ordered)
+  ordered)
 
 (cmd/main (cmd/fn [file :file]
   (pp (transcribe (slurp file) :on-debug eprin))))

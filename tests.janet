@@ -38,13 +38,11 @@
 
 (deftest "trivial transcription"
   (test (steno/transcribe "echo hello")
-    {:actual @{0 {:errs @[""]
-                  :outs @["hello\n"]
-                  :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    {:actual @{0 {:errs @[""] :outs @["hello\n"]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[]}))
 
 (deftest "error reports"
@@ -52,11 +50,11 @@
     true
     false
     `)
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    {:actual @{0 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[@[2 @[1]]]}))
 
 (deftest "trace line numbers do not match source line numbers"
@@ -68,27 +66,28 @@
     #|
     false
     `)
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}
-               1 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit true
-                    :out @[" this will interfere" "" "" ""]
-                    :status @[nil]}
-                 1 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    {:actual @{0 {:errs @[""] :outs @[""]}
+               1 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit true
+                         :out @[" this will interfere" "" "" ""]
+                         :status @[nil]}
+                     1 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[@[3 @[1]]]}))
 
 (deftest "pipes split across multiple times report status as the final line"
   (test (steno/transcribe `
     true | \
-    false`)
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    false
+    `)
+    {:actual @{0 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[@[2 @[0 1]]]})
   (test (steno/transcribe `
     false | \
@@ -96,22 +95,21 @@
     false | \
     false | \
     false`)
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    {:actual @{0 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[@[5 @[1 1 1 1 1]]]}))
 
 (deftest "steno_log does not show up in error output"
   (def debugs @[])
-  (test (steno/transcribe `
-    steno_log "hello"` :on-debug (partial array/push debugs))
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+  (test (steno/transcribe `steno_log hello` :on-debug |(array/push debugs $))
+    {:actual @{0 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[]})
   (test debugs @[@"hello\n"]))
 
@@ -119,28 +117,114 @@
   (test (steno/transcribe `
     true | false | true | \
     false | true | false
-  `)
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    `)
+    {:actual @{0 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[@[2 @[0 1 0 1 0 1]]]}))
 
 (deftest "subshell failures can result in redundant trace errors"
   (test (steno/transcribe `
     (exit 1) | (exit 2)
     (exit 1) | (exit 1)
-  `)
-    {:actual @{0 {:errs @[""] :outs @[""] :status @[nil]}}
-     :expected @{0 {:err @[]
-                    :explicit false
-                    :out @[]
-                    :status @[nil]}}
+    `)
+    {:actual @{0 {:errs @[""] :outs @[""]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
      :traced @[@[1 @[1 2]]
                @[1 @[1 2]]
                @[2 @[1 1]]
                @[2 @[1 1]]]}))
+
+(deftest "output always ends with an implicit expectation"
+  (test (steno/transcribe `
+    echo hello
+    `)
+    {:actual @{0 {:errs @[""] :outs @["hello\n"]}}
+     :expectations @{0 @{:err @[]
+                         :explicit false
+                         :out @[]
+                         :status @[nil]}}
+     :traced @[]}))
+
+(defn unindent [str]
+  (def indentation (first (peg/match ~(/ ':s* ,length) str)))
+  (string/join (seq [line :in (string/split "\n" str)]
+    (string/slice line indentation)) "\n"))
+
+(deftest "basic correction"
+  (test-stdout (steno/reconcile (unindent `
+    echo hello
+    #| goodbye`)) `
+    echo hello
+    #| hello
+  `
+    @["echo hello"
+      @{:actual-err ""
+        :actual-out "hello\n"
+        :err @[]
+        :explicit true
+        :out @[" goodbye"]
+        :status @[nil]}
+      @{:actual-err ""
+        :actual-out ""
+        :err @[]
+        :explicit false
+        :out @[]
+        :status @[nil]}]))
+
+(deftest "uncaptured output is captured at the end"
+  (test-stdout (steno/reconcile (unindent `
+    echo one
+    #| foo
+    echo two`)) `
+    echo one
+    #| one
+    echo two
+    #| two
+  `
+    @["echo one"
+      @{:actual-err ""
+        :actual-out "one\n"
+        :err @[]
+        :explicit true
+        :out @[" foo"]
+        :status @[nil]}
+      "echo two"
+      @{:actual-err ""
+        :actual-out "two\n"
+        :err @[]
+        :explicit false
+        :out @[]
+        :status @[nil]}]))
+
+(deftest "explicit expectations appear even with no output"
+  (test-stdout (steno/reconcile (unindent `
+    true
+    #| foo
+    true`)) `
+    true
+    #-
+    true
+  `
+    @["true"
+      @{:actual-err ""
+        :actual-out ""
+        :err @[]
+        :explicit true
+        :out @[" foo"]
+        :status @[nil]}
+      "true"
+      @{:actual-err ""
+        :actual-out ""
+        :err @[]
+        :explicit false
+        :out @[]
+        :status @[nil]}]))
 
 # TODO: need some tests for outputs in loops... i think it's okay
 # to just say, yeah, you can see the same expectation multiple

@@ -64,3 +64,8 @@
         ,$result))))
 
 (defn ignore [_])
+
+(defn unique [ind]
+  (if (> (length (distinct ind)) 1)
+    (errorf "non-unique values in %q" ind)
+    (first ind)))
