@@ -197,6 +197,16 @@
       #| hi
   `))
 
+# TODO: this is obviously goofy
+(deftest "newline between source and implicit final expectation when source ends in a newline"
+  (test-stdout (steno/reconcile (unindent `
+    echo hi
+    `)) `
+    echo hi
+
+    #| hi
+  `))
+
 # TODO: need some tests for outputs in loops... i think it's okay
 # to just say, yeah, you can see the same expectation multiple
 # times? maybe? or maybe we always take the last one. i'm not sure.

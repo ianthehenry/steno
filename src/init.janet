@@ -9,7 +9,7 @@
 (def prelude `
 BASH_XTRACEFD=$STENO_DEBUG_FD
 steno_error () {
-  printf '%s %s\0' "$1" "$2" >&4
+  printf '%s %s\0' "$1" "$2" >&$STENO_TRACE_FD
 }
 trap 'steno_error "$LINENO" "${PIPESTATUS[*]}"' ERR
 
@@ -210,7 +210,7 @@ echo -n hello
         :status @[nil]}]))
 
 (defn parse-actuals [separator output errput]
-  (def results-peg (peg/compile ~(some (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
+  (def results-peg (peg/compile ~(any (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
   (def results @{})
   (defn get-result [tag]
     (get-or-put results tag {:errs @[] :outs @[]}))
@@ -266,29 +266,29 @@ hello\n
   (def [trace-reader trace-writer] (posix-spawn/pipe :read-stream))
   (def [debug-reader debug-writer] (posix-spawn/pipe :read-stream))
 
-  # I don't understand why I need to [:close source-writer].
-  # Shouldn't CLOEXEC take care of that for me?
-  # steno_trace and steno_log should probably be functions
-  (def env @{"STENO_DEBUG_FD" "5"})
+  (def source-fd (posix-spawn/fd source-reader))
+  (def trace-fd (posix-spawn/fd trace-writer))
+  (def debug-fd (posix-spawn/fd debug-writer))
+
+  (def env @{"STENO_DEBUG_FD" (string debug-fd)
+             "STENO_TRACE_FD" (string trace-fd)})
   # TODO: should we filter what we inherit? what does cram do?
   (def inherit-env (os/environ))
   (table/setproto env inherit-env)
-  (def proc
-    (posix-spawn/spawn2 ["bash" ;bash-options "/dev/fd/6"]
+  (def proc (posix-spawn/spawn2 ["bash" ;bash-options (string "/dev/fd/" source-fd)]
     {:cmd "bash"
      :file-actions
-       [[:close stdin] [:dup2 source-reader 6] [:close source-reader] [:close source-writer]
-        [:close stdout] [:dup2 stdout-writer stdout] [:close stdout-writer] [:close stdout-reader]
-        [:close stderr] [:dup2 stderr-writer stderr] [:close stderr-writer] [:close stderr-reader]
-        [:dup2 trace-writer 4] [:close trace-writer] [:close trace-reader]
-        [:dup2 debug-writer 5] [:close debug-writer] [:close debug-reader]]
+       [[:close stdin]
+        [:close stdout] [:dup2 stdout-writer stdout] [:close stdout-writer]
+        [:close stderr] [:dup2 stderr-writer stderr] [:close stderr-writer]]
      :env (table/proto-flatten env)
      }))
-  (file/close source-reader)
-  (file/close stdout-writer)
-  (file/close stderr-writer)
-  (file/close trace-writer)
-  (file/close debug-writer)
+
+  (posix-spawn/close-fd source-reader)
+  (posix-spawn/close-fd stdout-writer)
+  (posix-spawn/close-fd stderr-writer)
+  (posix-spawn/close-fd trace-writer)
+  (posix-spawn/close-fd debug-writer)
 
   (def trace-buf @"")
   (def stdout-buf @"")
@@ -363,14 +363,17 @@ hello\n
       (string? entry) (do
         (set last-source-line entry)
         (print entry))
+      # if you never encountered this expectation, actual-{out,err} will be nil
       (let [{:actual-err err :actual-out out :explicit explicit} entry]
         (def indentation (string/repeat " " (get-indentation last-source-line)))
-        (unless (empty? out)
+        (def out? (not (or (nil? out) (empty? out))))
+        (def err? (not (or (nil? err) (empty? err))))
+        (when out?
           (print-lines-prefixed (string indentation "#|") out))
-        (unless (empty? err)
-          (print-lines-prefixed "#!" err))
+        (when err?
+          (print-lines-prefixed (string indentation "#!") err))
         # TODO: also status
-        (when (and explicit (empty? out) (empty? err))
+        (when (and explicit (not (or out? err?)))
           (print "#-"))
         ))))
 
@@ -403,4 +406,4 @@ hello\n
   )
 
 (cmd/main (cmd/fn [file :file]
-  (pp (transcribe (slurp file) :on-debug eprin))))
+  (reconcile (slurp file) :on-debug eprin)))

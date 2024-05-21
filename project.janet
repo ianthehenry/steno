@@ -7,3 +7,7 @@
      {:url "https://github.com/ianthehenry/pat.git"}
      {:url "https://github.com/ianthehenry/cmd.git"}
      ])
+
+(declare-executable
+ :name "steno"
+ :entry "src/init.janet")
