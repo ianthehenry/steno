@@ -6,6 +6,7 @@
      {:url "https://github.com/ianthehenry/judge.git"}
      {:url "https://github.com/ianthehenry/pat.git"}
      {:url "https://github.com/ianthehenry/cmd.git"}
+     {:url "https://github.com/ianthehenry/cmp.git"}
      ])
 
 (declare-executable

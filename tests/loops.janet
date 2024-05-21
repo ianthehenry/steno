@@ -9,9 +9,11 @@
     done`)) `
     for i in 0 1; do
       false
+      #? 1
     done
   `))
 
+# TODO
 (deftest "multiple distinct exit codes in a loop is not fine"
   (test-stdout (steno/reconcile (unindent `
     for i in 0 1; do
@@ -19,6 +21,7 @@
     done`)) `
     for i in 0 1; do
       test $i = 0
+      #? 1
     done
   `))
 

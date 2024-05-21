@@ -50,3 +50,20 @@
     #-
     true
   `))
+
+# TODO
+(deftest "unreachable code causes an error"
+  (test-stdout (steno/reconcile (unindent `
+    echo one
+    #| one
+    exit 0
+    echo two
+    #| two
+    true`)) `
+    echo one
+    #| one
+    exit 0
+    echo two
+    #-
+    true
+  `))

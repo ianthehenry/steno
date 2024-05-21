@@ -27,3 +27,29 @@
                @[1 @[1 2]]
                @[2 @[1 1]]
                @[2 @[1 1]]]}))
+
+(deftest "failing statements get status expectations, even if they didn't exist"
+  (test-stdout (steno/reconcile (unindent `
+    false
+    true
+    `)) `
+    false
+    #? 1
+    true
+    
+  `))
+
+# TODO
+(deftest "status expectations can go at end of file"
+  (test-stdout (steno/reconcile (unindent `
+    false`)) `
+    false
+    #? 1
+  `)
+  (test-stdout (steno/reconcile (unindent `
+    false
+    `)) `
+    false
+    #? 1
+    
+  `))

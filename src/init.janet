@@ -2,6 +2,7 @@
 (import pat)
 (import cmd)
 (use judge)
+(use cmp/import)
 (use ./util)
 
 # TODO: should probably make a printf version of steno_log.
@@ -345,37 +346,43 @@ hello\n
 # oh shoot, i need to know the level
 # of indentation of the preceding line
 # or of the lines we're correcting or something
-(defn print-lines-prefixed [prefix str]
+(defn xprint-lines-prefixed [to indentation prefix str]
   (def lines (string/split "\n" str))
   (defn last? [i]
     (= i (dec (length lines))))
   (seq [[i line] :pairs lines
         :unless (and (empty? line) (last? i))]
-    (prin prefix)
-    (unless (empty? line)
-      (prin " "))
-    (print line)))
+    (xprint to indentation prefix (if (empty? line) "" " ") line)))
 
-(defn render [ordered]
+(defn render [ordered buf]
   (var last-source-line "")
   (each entry ordered
     (cond
       (string? entry) (do
         (set last-source-line entry)
-        (print entry))
+        (xprint buf entry))
       # if you never encountered this expectation, actual-{out,err} will be nil
-      (let [{:actual-err err :actual-out out :explicit explicit} entry]
+      (let [{:actual-err err :actual-out out :actual-status status :explicit explicit} entry]
         (def indentation (string/repeat " " (get-indentation last-source-line)))
         (def out? (not (or (nil? out) (empty? out))))
         (def err? (not (or (nil? err) (empty? err))))
+        (def status? (not (nil? status)))
         (when out?
-          (print-lines-prefixed (string indentation "#|") out))
+          (xprint-lines-prefixed buf indentation "#|" out))
         (when err?
-          (print-lines-prefixed (string indentation "#!") err))
-        # TODO: also status
-        (when (and explicit (not (or out? err?)))
-          (print "#-"))
+          (xprint-lines-prefixed buf indentation "#!" err))
+        (when status?
+          (xprint buf indentation "#? " (string/join (map string status) " ")))
+        (when (and explicit (not (or out? err? status?)))
+          (xprint buf indentation "#-"))
         ))))
+
+(defmacro pop-while [stack predicate name & body]
+  (with-syms [$stack $predicate]
+    ~(let [,$stack ,stack ,$predicate ,predicate]
+      (while (and (not (empty? ,$stack)) (,$predicate (array/peek ,$stack)))
+        (def ,name (array/pop ,$stack))
+        ,;body))))
 
 (defn reconcile [source &named on-debug]
   (def separator (make-separator))
@@ -401,9 +408,39 @@ hello\n
     (put expectation :actual-out (unique outs))
     (put expectation :actual-err (unique errs)))
 
-  (render ordered)
-  #ordered
-  )
+  # TODO: we should check for duplicate expectations now,
+  # and remove the new-expectation de-duping stuff. this way
+  # we can report the statuses in the order they happened, instead of
+  # after the (unstable!) cmp/sort below
+
+  # we'll treat this like a stack, so we put it in reverse order
+  (cmp/sort traced (by 0 desc))
+
+  (def new-ordered @[])
+  (eachp [i element] ordered
+    (var new-expectation nil)
+    (pop-while traced |(= i (first $)) [_ status]
+      (pat/match element
+        |string? (if new-expectation
+            # TODO: check for duplicate status
+            nil
+            (do
+              (def expectation (expectation/new :explicit false))
+              (set new-expectation expectation)
+              (put expectation :actual-status status)
+              (array/push new-ordered expectation)))
+        expectation (put expectation :actual-status status)))
+    (array/push new-ordered element))
+
+  #(each [line-number statuses] traced
+  #  # find the expectation at line line-number+1, or create it if it doesn't exist yet
+  #  # one way we could do that is sorting by line-number, then iterating over
+  #  # the input and trace output in step
+  #  )
+
+  (def buf @"")
+  (render new-ordered buf)
+  (prin buf))
 
 (cmd/main (cmd/fn [file :file]
   (reconcile (slurp file) :on-debug eprin)))
