@@ -72,3 +72,8 @@
 
 (def- indentation-peg (peg/compile ~(/ ':s* ,length)))
 (defn get-indentation [str] (first (peg/match indentation-peg str)))
+
+(defn unindent [str]
+  (def indentation (get-indentation str))
+  (string/join (seq [line :in (string/split "\n" str)]
+    (string/slice line indentation)) "\n"))
