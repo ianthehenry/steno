@@ -23,15 +23,32 @@ steno_log () {
 
 (def bash-options ["-o" "nounset" "-o" "pipefail"])
 
-(def example1 `
+(def parse-peg (peg/compile ~{
+  :line (+
+    (/ (* (/ ':s* ,length) :op '(to -1)) ,|[$1 $2 $0])
+    (/ (* '(to -1) (line)) ,|[:source ;$&]))
+  :op (+
+    (/ "#|" :stdout)
+    (/ "#!" :stderr)
+    (/ "#-" :empty)
+    (/ "#?" :status))
+  :main (split "\n" :line)
+}))
+
+(test (peg/match parse-peg `
 echo hi
 #? 0
 #| hi
 #! hello
 #| bye
 `)
+  @[[:source "echo hi" 1]
+    [:status " 0" 0]
+    [:stdout " hi" 0]
+    [:stderr " hello" 0]
+    [:stdout " bye" 0]])
 
-(def example2 `
+(test (peg/match parse-peg `
 echo hi
 echo hello
 #| hi
@@ -39,37 +56,16 @@ echo hello
 echo -n hi
 echo -n hello
 #| hihello
-##
+#-
 `)
-
-(def parse-peg (peg/compile ~{
-  :line (+
-    (/ (* :s* :op '(to -1)) ,|[$0 $1])
-    (/ (* '(to -1) (line)) ,|[:source ;$&]))
-  :op (+
-    (/ "#|" :stdout)
-    (/ "#!" :stderr)
-    (/ "##" :empty)
-    (/ "#?" :status))
-  :main (split "\n" :line)
-}))
-
-(test (peg/match parse-peg example1)
-  @[[:source "echo hi" 1]
-    [:status " 0"]
-    [:stdout " hi"]
-    [:stderr " hello"]
-    [:stdout " bye"]])
-
-(test (peg/match parse-peg example2)
   @[[:source "echo hi" 1]
     [:source "echo hello" 2]
-    [:stdout " hi"]
-    [:stdout " hello"]
+    [:stdout " hi" 0]
+    [:stdout " hello" 0]
     [:source "echo -n hi" 5]
     [:source "echo -n hello" 6]
-    [:stdout " hihello"]
-    [:empty ""]])
+    [:stdout " hihello" 0]
+    [:empty "" 0]])
 
 (defn expectation/new [&named explicit]
   @{:err @[] :out @[] :status (ref/new nil) :explicit explicit})
@@ -87,41 +83,57 @@ echo -n hello
       [:source :source] nil
       [:expectation :source] (transition [:source @[]])
       [:expectation _] nil
-      [:source _] (transition [:expectation (expectation/new :explicit true)]))
+      [:source _]
+        (transition [:expectation (expectation/new :explicit true)]))
 
     (pat/match [line state]
       [[:source line line-number] [:source lines]]
         (array/push lines [line line-number])
-      [[:stdout line] [:expectation {:out out}]] (array/push out line)
-      [[:stderr line] [:expectation {:err err}]] (array/push err line)
-      [[:status line] [:expectation {:status status}]] (ref/set status line)
-      [[:empty line] [:expectation _]] nil))
+      [[:stdout line _] [:expectation {:out out}]] (array/push out line)
+      [[:stderr line _] [:expectation {:err err}]] (array/push err line)
+      [[:status line _] [:expectation {:status status}]] (ref/set status line)
+      [[:empty line _] [:expectation _]] nil))
   (transition nil)
   finished-states)
 
-(test (parse-script example1)
+(test (parse-script `
+echo hi
+#? 0
+#| hi
+#! hello
+#| bye
+`)
   @[[:source @[["echo hi" 1]]]
     [:expectation
-     {:err @[" hello"]
-      :explicit true
-      :out @[" hi" " bye"]
-      :status @[" 0"]}]])
+     @{:err @[" hello"]
+       :explicit true
+       :out @[" hi" " bye"]
+       :status @[" 0"]}]])
 
-(test (parse-script example2)
+(test (parse-script `
+echo hi
+echo hello
+#| hi
+#| hello
+echo -n hi
+echo -n hello
+#| hihello
+#-
+`)
   @[[:source
      @[["echo hi" 1] ["echo hello" 2]]]
     [:expectation
-     {:err @[]
-      :explicit true
-      :out @[" hi" " hello"]
-      :status @[nil]}]
+     @{:err @[]
+       :explicit true
+       :out @[" hi" " hello"]
+       :status @[nil]}]
     [:source
      @[["echo -n hi" 5] ["echo -n hello" 6]]]
     [:expectation
-     {:err @[]
-      :explicit true
-      :out @[" hihello"]
-      :status @[nil]}]])
+     @{:err @[]
+       :explicit true
+       :out @[" hihello"]
+       :status @[nil]}]])
 
 # each expectation gets a unique identifier
 
@@ -159,7 +171,16 @@ echo -n hello
 (deftest compile-script
   # the separator gets escaped, even if it's ascii, so I'm using something
   # recognizable in hex instead of something like <sep>
-  (def {:ordered ordered :expectation expectation :lines lines} (compile-script example2 "\xff"))
+  (def {:ordered ordered :expectation expectation :lines lines} (compile-script `
+echo hi
+echo hello
+#| hi
+#| hello
+echo -n hi
+echo -n hello
+#| hihello
+#-
+` "\xff"))
   (test expectation nil)
   (test-stdout (each line lines (print line)) `
     echo hi
@@ -173,20 +194,20 @@ echo -n hello
   (test ordered
     @["echo hi"
       "echo hello"
-      {:err @[]
-       :explicit true
-       :out @[" hi" " hello"]
-       :status @[nil]}
+      @{:err @[]
+        :explicit true
+        :out @[" hi" " hello"]
+        :status @[nil]}
       "echo -n hi"
       "echo -n hello"
-      {:err @[]
-       :explicit true
-       :out @[" hihello"]
-       :status @[nil]}
-      {:err @[]
-       :explicit false
-       :out @[]
-       :status @[nil]}]))
+      @{:err @[]
+        :explicit true
+        :out @[" hihello"]
+        :status @[nil]}
+      @{:err @[]
+        :explicit false
+        :out @[]
+        :status @[nil]}]))
 
 (defn parse-actuals [separator output errput]
   (def results-peg (peg/compile ~(some (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
@@ -205,12 +226,8 @@ hello\n
 <sep>\x00\x00\x00\x00bye then\n
 <sep>\x01\x00\x00\x00"
 "<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00")
-  @{0 {:errs @[""]
-       :outs @["hi\nhello\n"]
-       :status @[nil]}
-    1 {:errs @[""]
-       :outs @["bye then\n"]
-       :status @[nil]}})
+  @{0 {:errs @[""] :outs @["hi\nhello\n"]}
+    1 {:errs @[""] :outs @["bye then\n"]}})
 
 # TODO: these line numbers are based on the compiled script,
 # which has erased certain comments. It's not clear to me yet
@@ -340,12 +357,16 @@ hello\n
     (print line)))
 
 (defn render [ordered]
+  (var last-source-line "")
   (each entry ordered
     (cond
-      (string? entry) (print entry)
+      (string? entry) (do
+        (set last-source-line entry)
+        (print entry))
       (let [{:actual-err err :actual-out out :explicit explicit} entry]
+        (def indentation (string/repeat " " (get-indentation last-source-line)))
         (unless (empty? out)
-          (print-lines-prefixed "#|" out))
+          (print-lines-prefixed (string indentation "#|") out))
         (unless (empty? err)
           (print-lines-prefixed "#!" err))
         # TODO: also status
@@ -378,7 +399,8 @@ hello\n
     (put expectation :actual-err (unique errs)))
 
   (render ordered)
-  ordered)
+  #ordered
+  )
 
 (cmd/main (cmd/fn [file :file]
   (pp (transcribe (slurp file) :on-debug eprin))))

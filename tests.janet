@@ -152,7 +152,7 @@
      :traced @[]}))
 
 (defn unindent [str]
-  (def indentation (first (peg/match ~(/ ':s* ,length) str)))
+  (def indentation (get-indentation str))
   (string/join (seq [line :in (string/split "\n" str)]
     (string/slice line indentation)) "\n"))
 
@@ -162,20 +162,7 @@
     #| goodbye`)) `
     echo hello
     #| hello
-  `
-    @["echo hello"
-      @{:actual-err ""
-        :actual-out "hello\n"
-        :err @[]
-        :explicit true
-        :out @[" goodbye"]
-        :status @[nil]}
-      @{:actual-err ""
-        :actual-out ""
-        :err @[]
-        :explicit false
-        :out @[]
-        :status @[nil]}]))
+  `))
 
 (deftest "uncaptured output is captured at the end"
   (test-stdout (steno/reconcile (unindent `
@@ -186,23 +173,9 @@
     #| one
     echo two
     #| two
-  `
-    @["echo one"
-      @{:actual-err ""
-        :actual-out "one\n"
-        :err @[]
-        :explicit true
-        :out @[" foo"]
-        :status @[nil]}
-      "echo two"
-      @{:actual-err ""
-        :actual-out "two\n"
-        :err @[]
-        :explicit false
-        :out @[]
-        :status @[nil]}]))
+  `))
 
-(deftest "explicit expectations appear even with no output"
+(deftest "explicit expectations still appear even with no output"
   (test-stdout (steno/reconcile (unindent `
     true
     #| foo
@@ -210,23 +183,20 @@
     true
     #-
     true
-  `
-    @["true"
-      @{:actual-err ""
-        :actual-out ""
-        :err @[]
-        :explicit true
-        :out @[" foo"]
-        :status @[nil]}
-      "true"
-      @{:actual-err ""
-        :actual-out ""
-        :err @[]
-        :explicit false
-        :out @[]
-        :status @[nil]}]))
+  `))
+
+(deftest "output indentation matches the indentation of the previous source line"
+  (test-stdout (steno/reconcile (unindent `
+    echo hi
+      #| foo
+      echo hi
+    #| foo`)) `
+    echo hi
+    #| hi
+      echo hi
+      #| hi
+  `))
 
 # TODO: need some tests for outputs in loops... i think it's okay
 # to just say, yeah, you can see the same expectation multiple
 # times? maybe? or maybe we always take the last one. i'm not sure.
-

@@ -69,3 +69,6 @@
   (if (> (length (distinct ind)) 1)
     (errorf "non-unique values in %q" ind)
     (first ind)))
+
+(def- indentation-peg (peg/compile ~(/ ':s* ,length)))
+(defn get-indentation [str] (first (peg/match indentation-peg str)))
