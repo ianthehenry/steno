@@ -29,13 +29,73 @@ echo hi
 #| hi
 ```
 
----
+# Special comments
 
-Some notes:
+```
+#| text   - stdout
+#! text   - stderr
+#? 1      - exit code
+#? 1 0 1  - multiple exit codes can follow pipes
+#\        - indicates no final newline on the previous #| or #! block
+#-        - indicates that there is no output
+```
 
-- Steno doesn't interleave `stderr` and `stdout`. `stderr` always appears first, followed by `stdout`. It doesn't matter in what order your program flushes writes to the file descriptors.
+# `#-`
 
-When you execute a script like this:
+If your input has an expectation block, but there is no actual output at that point, Steno will write `#-`. This allows you to differentiate between no output and a newline:
+
+```
+echo
+#|
+
+true
+#-
+```
+
+Steno will only write `#-` if there is an expectation at that position in its input. Steno will never forget "checkpoints."
+
+# Exit codes
+
+Steno will automatically insert `#?` when statements exit non-zero. So the following script:
+
+```bash
+true
+false
+true
+```
+
+Will become:
+
+```bash
+true
+false
+#? 1
+true
+```
+
+# Debugging
+
+Steno captures stdout and stderr from the script that you run, and doesn't print anything until the entire script completes, which can make it hard to use `printf`-debugging when a test doesn't terminate or takes a long time to complete.
+
+This is annoying, so Steno scripts have access to an extra file descriptor, available as `$STENO_DEBUG_FD`. Any writes to `$STENO_DEBUG_FD` will automatically pass through to Steno's stderr output. 
+
+Steno also defines the following helper function automatically:
+
+```bash
+steno_log () { echo >&$STENO_DEBUG_FD "$@" }
+```
+
+By default Bash also writes `set -x` output to stderr. Steno sets `BASH_XTRACEFD` to `$STENO_DEBUG_FD`, so its output should be passed through as well.
+
+**But hark!** `BASH_XTRACEFD` is only defined on "newer" versions of Bash (2009 and later). The `/bin/bash` that ships natively with macOS is from 2007, and does not support `BASH_XTRACEFD`. So `set -x` output will be captured by Steno on macOS unless you have a newer version of Bash on your `PATH`. Which you really should.
+
+# Execution model
+
+Steno works by translating the Bash script you give it into another, extremely similar Bash script with a little bit of extra output thrown in -- replacing specially-formatted comment-blocks like `#|` and `#!` with calls to print out a unique, randomized string of bytes.
+
+Then it executes that script, and collects its stdout and stderr output. It searches the output for the random byte strings that it injected, and that tells it what pieces of the output belong to which expectation.
+
+So the script that Steno executes is not *exactly* the same script that would run if you just ran `bash something.steno`. For example:
 
 ```
 echo hi
@@ -43,25 +103,43 @@ echo hi
 echo bye
 ```
 
-The actual stdout of that the script is something like:
+Turns into something more like:
 
 ```
-hi
-<random byte sequence 1>
-bye
+echo hi
+echo '<some long unique string>'
+echo bye
 ```
 
-Steno parses this output to determine where one "block" ends and the other begins.
+This kinda matters, but not really. It means that comments significant to Steno shouldn't appear in certain positions. For example:
 
+```bash
+while false;
+#| output
+do
+  :
+done
 ```
-##        - explicitly indicates that there is no output
-#| text   - stdout
-#! text   - stderr
-#=| text  - verbose stdout
-#=! text  - verbose stderr
-#? 1      - exit code
-#? 1 0 1  - multiple exit codes can follow pipes
+
+That's a valid Bash script that does nothing, but the translated equivalent:
+
+```bash
+while false;
+printf '<special output delimiter>'
+do
+  :
+done
 ```
+
+Gets into an infinite loop.
+
+This shouldn't really matter in practice, but if a script behaves differently under Bash and Steno, this is likely the reason.
+
+# Misc notes
+
+Steno doesn't interleave `stderr` and `stdout`. `stderr` always appears first, followed by `stdout`. It doesn't matter in what order your program flushes writes to the file descriptors.
+
+# Unimplemented ideas
 
 If you care about distinguishing lines with newlines, use `#=|`. `#=|` will print whitespace characters as C-style escape codes. For example:
 
@@ -100,86 +178,3 @@ You can also use `#~|` to see a "prettified" version of output, that replaces co
 ```
 
 (You can also use `#=!` for exact stderr.)
-
-# Exit codes
-
-The following script:
-
-```bash
-true
-false
-true
-```
-
-Will become:
-
-```bash
-true
-false
-#? 1
-true
-```
-
-Steno will automatically insert `#?` when statements exit non-zero. (It does this by setting an `ERR` trap at the beginning of your script.)
-
-# Debugging
-
-Steno captures stdout and stderr from the script that you run, and doesn't print anything until the entire script completes, which can make it hard to use `printf`-debugging when a test doesn't terminate or takes a long time to complete.
-
-This is annoying, so Steno scripts have access to an extra file descriptor, available as `$STENO_DEBUG_FD`. Any writes to `$STENO_DEBUG_FD` will automatically pass through to Steno's stderr output. 
-
-Steno also defines the following helper function automatically:
-
-```bash
-steno_log () { echo >&$STENO_DEBUG_FD "$@" }
-```
-
-By default Bash also writes `set -x` output to stderr. Steno sets `BASH_XTRACEFD` to `$STENO_DEBUG_FD`, so its output should be passed through as well.
-
-**But hark!** `BASH_XTRACEFD` is only defined on "newer" versions of Bash (2009 and later). The `/bin/bash` that ships natively with macOS is from 2007, and does not support `BASH_XTRACEFD`. So `set -x` output will be captured by Steno on macOS unless you have a newer version of Bash on your `PATH`. Which you really should.
-
-# Execution model
-
-Steno works by translating the Bash script you give it into another, extremely similar Bash script with a little bit of extra output thrown in -- replacing specially-formatted comment-blocks like `#|` and `#!` with calls to print out a unique, randomized string of bytes.
-
-Then it executes that script, and collects its stdout and stderr output. It searches the output for the random byte strings that it injected, and that tells it what pieces of the output belong to which expectation.
-
-So the script that Steno executes is not *exactly* the same script that would run if you just ran `bash something.steno`. For example:
-
-```
-echo hi
-##
-echo bye
-```
-
-Turns into something more like:
-
-```
-echo hi
-echo '<some long unique string>'
-echo bye
-```
-
-This kinda matters, but not really. It means that comments significant to Steno shouldn't appear in certain positions. For example:
-
-```bash
-while false;
-#| output
-do
-  :
-done
-```
-
-That's a valid Bash script that does nothing, but the translated equivalent:
-
-```bash
-while false;
-printf '<special output delimiter>'
-do
-  :
-done
-```
-
-Gets into an infinite loop.
-
-This shouldn't really matter in practice, but if a script behaves differently under Bash and Steno, this is likely the reason.

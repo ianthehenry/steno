@@ -350,9 +350,12 @@ hello\n
   (def lines (string/split "\n" str))
   (defn last? [i]
     (= i (dec (length lines))))
-  (seq [[i line] :pairs lines
+  (loop [[i line] :pairs lines
         :unless (and (empty? line) (last? i))]
-    (xprint to indentation prefix (if (empty? line) "" " ") line)))
+    (xprint to indentation prefix (if (empty? line) "" " ") line))
+
+  (when (and (not (empty? lines)) (not (empty? (last lines))))
+    (xprint to indentation "#\\")))
 
 (defn render [ordered buf]
   (var last-source-line "")

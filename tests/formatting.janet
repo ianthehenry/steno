@@ -59,3 +59,44 @@
     
     #| hi
   `))
+
+(deftest "output with no trailing newline is distinguished"
+  (test-stdout (steno/reconcile (unindent `
+    echo hi
+    #|
+    echo -n hi
+    #|
+    `)) `
+    echo hi
+    #| hi
+    echo -n hi
+    #| hi
+    #\
+    
+  `)
+  (test-stdout (steno/reconcile (unindent `
+    echo hi >&2
+    #|
+    echo -n hi >&2
+    #|
+    `)) `
+    echo hi >&2
+    #! hi
+    echo -n hi >&2
+    #! hi
+    #\
+    
+  `)
+  (test-stdout (steno/reconcile (unindent `
+    echo -n hi
+    echo -n hi >&2
+    `)) `
+    echo -n hi
+    echo -n hi >&2
+    
+    #| hi
+    #\
+    #! hi
+    #\
+  `)
+  )
