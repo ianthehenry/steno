@@ -1,6 +1,6 @@
 (use judge)
-(use ./util)
-(import ./steno)
+(use ../src/util)
+(import ../src :as steno)
 
 (deftest "transcribe-raw"
   (test (steno/transcribe-raw "echo stdout; echo stderr >&2; false")
