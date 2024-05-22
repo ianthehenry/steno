@@ -376,7 +376,7 @@ echo -n hello
   (while (= nil (proc :exit-code))
     (ev/sleep 0.001)))
 
-(defn transcribe-raw [script &named on-debug]
+(defn transcribe [script &named on-debug]
   (default on-debug ignore)
   (def [source-reader source-writer] (posix-spawn/pipe :write-stream))
   (def [stdout-reader stdout-writer] (posix-spawn/pipe :read-stream))
@@ -434,21 +434,6 @@ echo -n hello
 
 (defn make-separator [] (string (math/rng-buffer (rng) 8)))
 
-(defn transcribe [source &named on-debug]
-  (def separator (make-separator))
-  (def {:expectations expectations
-        :ordered ordered
-        :lines compiled-script-lines}
-    (compile-script source separator))
-
-  (def {:stdout-buf stdout-buf
-        :stderr-buf stderr-buf
-        :trace-buf trace-buf}
-    (transcribe-raw (string/join compiled-script-lines "\n") :on-debug on-debug))
-  {:expectations expectations
-   :actual (parse-actuals separator stdout-buf stderr-buf)
-   :traced (parse-trace-output trace-buf)})
-
 (defn xprint-lines-prefixed [to indentation prefix str]
   (def lines (string/split "\n" str))
   (defn last? [i]
@@ -494,7 +479,7 @@ echo -n hello
   (def {:stdout-buf stdout-buf
         :stderr-buf stderr-buf
         :trace-buf trace-buf}
-    (transcribe-raw (string/join compiled-script-lines "\n") :on-debug on-debug))
+    (transcribe (string/join compiled-script-lines "\n") :on-debug on-debug))
 
   (def actual (parse-actuals separator stdout-buf stderr-buf))
   (def traced (parse-trace-output trace-buf))

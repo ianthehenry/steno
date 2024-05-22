@@ -2,20 +2,20 @@
 (use ../src/util)
 (import ../src :as steno)
 
-(deftest "transcribe-raw"
-  (test (steno/transcribe-raw "echo stdout; echo stderr >&2; false")
+(deftest "transcribe"
+  (test (steno/transcribe "echo stdout; echo stderr >&2; false")
     {:stderr-buf @"stderr\n"
      :stdout-buf @"stdout\n"
      :trace-buf @"10 1\0"}))
 
-(deftest "transcribe-raw redirects stdout properly"
-  (test (steno/transcribe-raw "echo stdout >/dev/stdout")
+(deftest "transcribe redirects stdout properly"
+  (test (steno/transcribe "echo stdout >/dev/stdout")
     {:stderr-buf @""
      :stdout-buf @"stdout\n"
      :trace-buf @""}))
 
-(deftest "transcribe-raw can read null bytes correctly"
-  (test (steno/transcribe-raw "printf '\\0\\0\\0'")
+(deftest "transcribe can read null bytes correctly"
+  (test (steno/transcribe "printf '\\0\\0\\0'")
     {:stderr-buf @""
      :stdout-buf @"\0\0\0"
      :trace-buf @""}))
@@ -32,6 +32,6 @@
   (def {:stderr-buf stderr-buf
         :stdout-buf stdout-buf
         :trace-buf trace-buf}
-        (steno/transcribe-raw script))
+        (steno/transcribe script))
 
   (test (length stdout-buf) 65537))

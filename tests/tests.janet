@@ -2,24 +2,17 @@
 (use ../src/util)
 (import ../src :as steno)
 
-(deftest "trivial transcription"
-  (test (steno/transcribe "echo hello")
-    {:actual @{0 {:errs @[""] :outs @["hello\n"]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[]}))
-
-(deftest "output always ends with an implicit expectation"
-  (test (steno/transcribe `
-    echo hello
-    `)
-    {:actual @{0 {:errs @[""] :outs @["hello\n"]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[]}))
-
 (deftest "basic correction"
   (test-stdout (steno/reconcile (unindent `
     echo hello
     #| goodbye`)) `
+    echo hello
+    #| hello
+  `))
+
+
+(deftest "implicit expectation always inserted"
+  (test-stdout (steno/reconcile "echo hello") `
     echo hello
     #| hello
   `))

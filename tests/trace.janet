@@ -2,17 +2,23 @@
 (use ../src/util)
 (import ../src :as steno)
 
+(defn get-trace [script]
+  (def {:lines lines} (steno/compile-script (unindent script) (steno/make-separator)))
+  (-> lines
+    (string/join "\n")
+    steno/transcribe
+    (in :trace-buf)
+    steno/parse-trace-output))
+
 (deftest "error reports"
-  (test (steno/transcribe `
+  (test (get-trace `
     true
     false
     `)
-    {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[@[2 @[1]]]}))
+    @[@[2 @[1]]]))
 
 (deftest "trace line numbers do not match source line numbers"
-  (test (steno/transcribe `
+  (test (get-trace `
     true
     #| this will interfere
     #|
@@ -20,49 +26,35 @@
     #|
     false
     `)
-    {:actual @{0 {:errs @[""] :outs @[""]}
-               1 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err ""
-                         :explicit true
-                         :out "this will interfere\n\n\n\n"}
-                     1 @{:err "" :explicit false :out ""}}
-     :traced @[@[3 @[1]]]}))
+    @[@[3 @[1]]]))
 
 (deftest "pipes split across multiple times report status as the final line"
-  (test (steno/transcribe `
+  (test (get-trace `
     true | \
     false
     `)
-    {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[@[2 @[0 1]]]})
-  (test (steno/transcribe `
+    @[@[2 @[0 1]]])
+  (test (get-trace `
     false | \
     false | \
     false | \
     false | \
     false`)
-    {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[@[5 @[1 1 1 1 1]]]}))
+    @[@[5 @[1 1 1 1 1]]]))
 
 (deftest "if a pipeline fails, succeeds, then fails, it will report multiple failures"
-  (test (steno/transcribe `
+  (test (get-trace `
     true | false | true | \
     false | true | false
     `)
-    {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[@[2 @[0 1 0 1 0 1]]]}))
+    @[@[2 @[0 1 0 1 0 1]]]))
 
 (deftest "subshell failures can result in redundant trace errors"
-  (test (steno/transcribe `
+  (test (get-trace `
     (exit 1) | (exit 2)
     (exit 1) | (exit 1)
     `)
-    {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err "" :explicit false :out ""}}
-     :traced @[@[1 @[1 2]]
-               @[1 @[1 2]]
-               @[2 @[1 1]]
-               @[2 @[1 1]]]}))
+    @[@[1 @[1 2]]
+      @[1 @[1 2]]
+      @[2 @[1 1]]
+      @[2 @[1 1]]]))
