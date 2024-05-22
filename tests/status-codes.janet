@@ -33,7 +33,6 @@
     
   `))
 
-# TODO
 (deftest "status expectations can go at end of file"
   (test-stdout (steno/reconcile (unindent `
     false`)) `

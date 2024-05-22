@@ -120,6 +120,8 @@ echo -n hello
         (ref/set (in expectation :status) line)
         (put no-eol-applies-to expectation nil))
       [[:no-eol _ _] [:expectation expectation]] (do
+        # TODO: fail if you have multiple of these? or if they
+        # don't occur at the end of the block?
         (put (in expectation :eol?) (in no-eol-applies-to expectation) false)
         (put no-eol-applies-to expectation nil))
       [[:empty line _] [:expectation expectation]] (put no-eol-applies-to expectation nil)))
@@ -305,8 +307,15 @@ echo -n hello
         :explicit true
         :out "hihello\n"}]))
 
+# there is definitely always at least one expectation,
+# but the output might not contain it, if the script
+# exits early. so we can't always associate residue
+# with an expectation ID.
 (defn parse-actuals [separator output errput]
-  (def results-peg (peg/compile ~(any (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
+  (def results-peg (peg/compile ~{
+    :main (* :properly-tagged :residue)
+    :properly-tagged (any (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))
+    :residue (+ -1 (/ '(to -1) ,|[:residue $0]))}))
   (def results @{})
   (defn get-result [tag]
     (get-or-put results tag {:errs @[] :outs @[]}))
@@ -316,14 +325,27 @@ echo -n hello
     (table/push (get-result tag) :errs text))
   results)
 
-(test (parse-actuals "<sep>" "
-hi\n
-hello\n
-<sep>\x00\x00\x00\x00bye then\n
-<sep>\x01\x00\x00\x00"
-"<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00")
+(test (parse-actuals "<sep>" (unindent "
+  hi\n
+  hello\n
+  <sep>\x00\x00\x00\x00bye then\n
+  <sep>\x01\x00\x00\x00")
+  "<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00")
   @{0 {:errs @[""] :outs @["hi\nhello\n"]}
     1 {:errs @[""] :outs @["bye then\n"]}})
+
+(deftest "parse-actuals includes trailing output in the final expectation"
+  (test (parse-actuals "<sep>" (unindent "
+    hi\n
+    hello\n
+    <sep>\x00\x00\x00\x00bye then\n
+    <sep>\x01\x00\x00\x00excess\n
+    words")
+  "<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00trailing")
+    @{0 {:errs @[""] :outs @["hi\nhello\n"]}
+      1 {:errs @[""] :outs @["bye then\n"]}
+      :residue {:errs @["trailing"]
+                :outs @["excess\nwords"]}}))
 
 # TODO: these line numbers are based on the compiled script,
 # which has erased certain comments. It's not clear to me yet
@@ -477,8 +499,12 @@ hello\n
   (def actual (parse-actuals separator stdout-buf stderr-buf))
   (def traced (parse-trace-output trace-buf))
 
+  (def final-expectation (assert (find-last |(not (string? $)) ordered) "BUG: script with no expectation"))
+
   (eachp [id {:errs errs :outs outs}] actual
-    (def expectation (assert (in expectations id) "unknown expectation ID"))
+    (def expectation (if (= id :residue)
+      final-expectation
+      (assert (in expectations id) "BUG: unknown expectation ID")))
     # TODO: this should really fail with a better error message
     (put expectation :actual-out (unique outs))
     (put expectation :actual-err (unique errs)))
@@ -506,12 +532,6 @@ hello\n
               (array/push new-ordered expectation)))
         expectation (put expectation :actual-status status)))
     (array/push new-ordered element))
-
-  #(each [line-number statuses] traced
-  #  # find the expectation at line line-number+1, or create it if it doesn't exist yet
-  #  # one way we could do that is sorting by line-number, then iterating over
-  #  # the input and trace output in step
-  #  )
 
   (def buf @"")
   (render new-ordered buf)
