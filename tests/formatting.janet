@@ -37,17 +37,28 @@
       #-
   `))
 
-# TODO
+(deftest "output indentation ignores blank lines"
+  (test-stdout (steno/reconcile (unindent `
+    echo hi
+      echo hi
+    
+    #|`)) `
+    echo hi
+      echo hi
+    
+      #| hi
+      #| hi
+  `))
+
 (deftest "newline between source and implicit final expectation when source ends in a newline"
   (test-stdout (steno/reconcile (unindent `
     echo hi
     `)) `
     echo hi
-    
     #| hi
+    
   `))
 
-# TODO
 (deftest "trailing newline doesn't mess up location of status"
   (test-stdout (steno/reconcile (unindent `
     echo hi
@@ -55,9 +66,9 @@
     `)) `
     echo hi
     false
+    #| hi
     #? 1
     
-    #| hi
   `))
 
 (deftest "output with no trailing newline is distinguished"
@@ -93,10 +104,10 @@
     `)) `
     echo -n hi
     echo -n hi >&2
-    
     #| hi
     #\
     #! hi
     #\
+    
   `)
   )

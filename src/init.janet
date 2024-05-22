@@ -192,18 +192,70 @@ echo -n hello
 
 (test (escape-bytes "\x01\x02\x03") "\\x01\\x02\\x03")
 
+(defn empty-line? [line]
+  (string/check-set " \t" line))
+(test (empty-line? "") true)
+(test (empty-line? "   ") true)
+(test (empty-line? "  \t ") true)
+(test (empty-line? "  \t x") false)
+
+(defn add-implicit-final-expectation! [stanzas]
+  (match (array/peek stanzas)
+    nil  (array/push stanzas [:expectation (expectation/implicit)])
+    [:source lines] (do
+      (def index-of-empty-suffix (inc (or (find-last-index |(not (empty-line? (first $))) lines) -1)))
+      (def non-empty-lines (tuple/slice lines 0 index-of-empty-suffix))
+      (def empty-lines (tuple/slice lines index-of-empty-suffix))
+      (array/pop stanzas)
+      (unless (empty? non-empty-lines)
+        (array/push stanzas [:source non-empty-lines]))
+      (array/push stanzas [:expectation (expectation/implicit)])
+      (unless (empty? empty-lines)
+        (array/push stanzas [:source empty-lines])))
+  ))
+
+(deftest add-implicit-final-expectation
+  (def stanzas @[])
+  (add-implicit-final-expectation! stanzas)
+  (test stanzas
+    @[[:expectation
+       @{:err "" :explicit false :out ""}]])
+
+  (def stanzas @[[:source [["echo hi" 1]]]])
+  (add-implicit-final-expectation! stanzas)
+  (test stanzas
+    @[[:source [["echo hi" 1]]]
+      [:expectation
+       @{:err "" :explicit false :out ""}]])
+
+  (def stanzas @[[:source [["echo hi" 1] ["" 2]]]])
+  (add-implicit-final-expectation! stanzas)
+  (test stanzas
+    @[[:source [["echo hi" 1]]]
+      [:expectation
+       @{:err "" :explicit false :out ""}]
+      [:source [["" 2]]]])
+
+  (def stanzas @[[:source [["echo hi" 1] ["  " 2] ["" 3]]]])
+  (add-implicit-final-expectation! stanzas)
+  (test stanzas
+    @[[:source [["echo hi" 1]]]
+      [:expectation
+       @{:err "" :explicit false :out ""}]
+      [:source [["  " 2] ["" 3]]]]))
+
 (defn compile-script [source separator]
   (var next-id 0)
   (def stanzas (parse-script source))
-  (array/push stanzas [:expectation (expectation/implicit)])
 
+  (add-implicit-final-expectation! stanzas)
   (def expectations @{})
   (def ordered @[])
 
   (def lines (catseq [stanza :in stanzas]
     (pat/match stanza
       [:source lines] (do
-        # TODO: why am I parsing the original line?
+        # TODO: why am I parsing the original line number?
         (def lines (map 0 lines))
         (array/concat ordered lines)
         lines)
@@ -240,7 +292,6 @@ echo -n hello
     echo -n hi
     echo -n hello
     printf '\xff\x01\x00\x00\x00'; printf '\xff\x01\x00\x00\x00' >&2
-    printf '\xff\x02\x00\x00\x00'; printf '\xff\x02\x00\x00\x00' >&2
   `)
   (test ordered
     @["echo hi"
@@ -252,8 +303,7 @@ echo -n hello
       "echo -n hello"
       @{:err ""
         :explicit true
-        :out "hihello\n"}
-      @{:err "" :explicit false :out ""}]))
+        :out "hihello\n"}]))
 
 (defn parse-actuals [separator output errput]
   (def results-peg (peg/compile ~(any (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
@@ -358,17 +408,6 @@ hello\n
    :stderr-buf stderr-buf
    :trace-buf trace-buf})
 
-# okay, now we parse the line failures and insert new expectations wherever necessary...
-# then we collapse adjacent expectations, i guess
-
-# afterwards, group all of the expectations by their ID
-# and error if we get inconsistent results for any expectation...
-# ...or if there's any expectation we fail to execute
-
-# then we produce the final output
-# ...and diff it against the original source
-# if there's any difference, we fail.
-
 (def rng (lazy (math/rng (os/time))))
 
 (defn make-separator [] (string (math/rng-buffer (rng) 8)))
@@ -388,9 +427,6 @@ hello\n
    :actual (parse-actuals separator stdout-buf stderr-buf)
    :traced (parse-trace-output trace-buf)})
 
-# oh shoot, i need to know the level
-# of indentation of the preceding line
-# or of the lines we're correcting or something
 (defn xprint-lines-prefixed [to indentation prefix str]
   (def lines (string/split "\n" str))
   (defn last? [i]
@@ -407,7 +443,8 @@ hello\n
   (each entry ordered
     (cond
       (string? entry) (do
-        (set last-source-line entry)
+        (unless (empty-line? entry)
+          (set last-source-line entry))
         (xprint buf entry))
       # if you never encountered this expectation, actual-{out,err} will be nil
       (let [{:actual-err err :actual-out out :actual-status status :explicit explicit} entry]
@@ -440,9 +477,6 @@ hello\n
   (def actual (parse-actuals separator stdout-buf stderr-buf))
   (def traced (parse-trace-output trace-buf))
 
-  # do i actually even need to parse the "expecteds"? of course i do if i want to make, like,
-  # my own interactive differ or whatever... but if i just shell out to cmp, do i need that
-  # at all?
   (eachp [id {:errs errs :outs outs}] actual
     (def expectation (assert (in expectations id) "unknown expectation ID"))
     # TODO: this should really fail with a better error message

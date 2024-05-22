@@ -87,3 +87,16 @@
 
 (defn table/push [t k v]
   (array/push (in t k) v))
+
+(defn find-last-index [pred ind]
+  (var result nil)
+  (loop [i :down-to [(dec (length ind)) 0]
+         :let [x (in ind i)]
+         :when (pred x)]
+    (set result i)
+    (break))
+  result)
+
+
+(test (find-index odd? [1 2 3 4]) 0)
+(test (find-last-index odd? [1 2 3 4]) 2)
