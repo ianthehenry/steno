@@ -77,3 +77,13 @@
   (def indentation (get-indentation str))
   (string/join (seq [line :in (string/split "\n" str)]
     (string/slice line indentation)) "\n"))
+
+(defmacro pop-while [stack predicate name & body]
+  (with-syms [$stack $predicate]
+    ~(let [,$stack ,stack ,$predicate ,predicate]
+      (while (and (not (empty? ,$stack)) (,$predicate (array/peek ,$stack)))
+        (def ,name (array/pop ,$stack))
+        ,;body))))
+
+(defn table/push [t k v]
+  (array/push (in t k) v))

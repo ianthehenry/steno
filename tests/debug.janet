@@ -6,9 +6,6 @@
   (def debugs @[])
   (test (steno/transcribe `steno_log hello` :on-debug |(array/push debugs $))
     {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err @[]
-                         :explicit false
-                         :out @[]
-                         :status @[nil]}}
+     :expectations @{0 @{:err "" :explicit false :out ""}}
      :traced @[]})
   (test debugs @[@"hello\n"]))

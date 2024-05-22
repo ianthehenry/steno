@@ -5,10 +5,7 @@
 (deftest "trivial transcription"
   (test (steno/transcribe "echo hello")
     {:actual @{0 {:errs @[""] :outs @["hello\n"]}}
-     :expectations @{0 @{:err @[]
-                         :explicit false
-                         :out @[]
-                         :status @[nil]}}
+     :expectations @{0 @{:err "" :explicit false :out ""}}
      :traced @[]}))
 
 (deftest "output always ends with an implicit expectation"
@@ -16,10 +13,7 @@
     echo hello
     `)
     {:actual @{0 {:errs @[""] :outs @["hello\n"]}}
-     :expectations @{0 @{:err @[]
-                         :explicit false
-                         :out @[]
-                         :status @[nil]}}
+     :expectations @{0 @{:err "" :explicit false :out ""}}
      :traced @[]}))
 
 (deftest "basic correction"

@@ -7,10 +7,7 @@
     false
     `)
     {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err @[]
-                         :explicit false
-                         :out @[]
-                         :status @[nil]}}
+     :expectations @{0 @{:err "" :explicit false :out ""}}
      :traced @[@[1 @[1]]]}))
 
 (deftest "subshell failures can result in redundant trace errors"
@@ -19,10 +16,7 @@
     (exit 1) | (exit 1)
     `)
     {:actual @{0 {:errs @[""] :outs @[""]}}
-     :expectations @{0 @{:err @[]
-                         :explicit false
-                         :out @[]
-                         :status @[nil]}}
+     :expectations @{0 @{:err "" :explicit false :out ""}}
      :traced @[@[1 @[1 2]]
                @[1 @[1 2]]
                @[2 @[1 1]]

@@ -26,13 +26,14 @@ steno_log () {
 
 (def parse-peg (peg/compile ~{
   :line (+
-    (/ (* (/ ':s* ,length) :op '(to -1)) ,|[$1 $2 $0])
+    (/ (* (/ ':s* ,length) :op (? " ") '(to -1)) ,|[$1 $2 $0])
     (/ (* '(to -1) (line)) ,|[:source ;$&]))
   :op (+
     (/ "#|" :stdout)
     (/ "#!" :stderr)
     (/ "#-" :empty)
-    (/ "#?" :status))
+    (/ "#?" :status)
+    (/ "#\\" :no-eol))
   :main (split "\n" :line)
 }))
 
@@ -42,12 +43,14 @@ echo hi
 #| hi
 #! hello
 #| bye
+#\ bye
 `)
   @[[:source "echo hi" 1]
-    [:status " 0" 0]
-    [:stdout " hi" 0]
-    [:stderr " hello" 0]
-    [:stdout " bye" 0]])
+    [:status "0" 0]
+    [:stdout "hi" 0]
+    [:stderr "hello" 0]
+    [:stdout "bye" 0]
+    [:no-eol "bye" 0]])
 
 (test (peg/match parse-peg `
 echo hi
@@ -61,15 +64,30 @@ echo -n hello
 `)
   @[[:source "echo hi" 1]
     [:source "echo hello" 2]
-    [:stdout " hi" 0]
-    [:stdout " hello" 0]
+    [:stdout "hi" 0]
+    [:stdout "hello" 0]
     [:source "echo -n hi" 5]
     [:source "echo -n hello" 6]
-    [:stdout " hihello" 0]
+    [:stdout "hihello" 0]
     [:empty "" 0]])
 
-(defn expectation/new [&named explicit]
-  @{:err @[] :out @[] :status (ref/new nil) :explicit explicit})
+(defn expectation/new []
+  @{:err @[] :out @[] :eol? @{:out true :err true} :status (ref/new nil)})
+
+# mutates lines!
+(defn- join-lines! [lines eol?]
+  (if eol? (array/push lines ""))
+  (string/join lines "\n"))
+
+(defn expectation/finalize [t]
+  (def {:out out :err err :eol? {:out out-eol? :err err-eol?} :status status} t)
+  @{:out (join-lines! out out-eol?)
+    :err (join-lines! err err-eol?)
+    :status (ref/get status)
+    :explicit true})
+
+(defn expectation/implicit []
+  @{:out "" :err "" :status nil :explicit false})
 
 (defn parse-script [source]
   (def finished-states @[])
@@ -79,23 +97,57 @@ echo -n hello
     (array/push finished-states state)
     (set state new-state))
 
+  (def no-eol-applies-to @{})
+
   (each line (peg/match parse-peg source)
     (pat/match [(state 0) (line 0)]
       [:source :source] nil
       [:expectation :source] (transition [:source @[]])
       [:expectation _] nil
-      [:source _]
-        (transition [:expectation (expectation/new :explicit true)]))
+      [:source _] (transition [:expectation (expectation/new)]))
 
     (pat/match [line state]
       [[:source line line-number] [:source lines]]
         (array/push lines [line line-number])
-      [[:stdout line _] [:expectation {:out out}]] (array/push out line)
-      [[:stderr line _] [:expectation {:err err}]] (array/push err line)
-      [[:status line _] [:expectation {:status status}]] (ref/set status line)
-      [[:empty line _] [:expectation _]] nil))
+      [[:stdout line _] [:expectation expectation]] (do
+        (table/push expectation :out line)
+        (put no-eol-applies-to expectation :out))
+      [[:stderr line _] [:expectation expectation]] (do
+        (table/push expectation :err line)
+        (put no-eol-applies-to expectation :err))
+      [[:status line _] [:expectation expectation]] (do
+        # TODO: fail on multiple statuses?
+        (ref/set (in expectation :status) line)
+        (put no-eol-applies-to expectation nil))
+      [[:no-eol _ _] [:expectation expectation]] (do
+        (put (in expectation :eol?) (in no-eol-applies-to expectation) false)
+        (put no-eol-applies-to expectation nil))
+      [[:empty line _] [:expectation expectation]] (put no-eol-applies-to expectation nil)))
   (transition nil)
-  finished-states)
+
+  (seq [state :in finished-states]
+    (match state
+      [:source _] state
+      [:expectation expectation]
+        [:expectation (expectation/finalize expectation)])))
+
+(test (parse-script `
+echo hi
+#| hi
+#\
+`)
+  @[[:source @[["echo hi" 1]]]
+    [:expectation
+     @{:err "" :explicit true :out "hi"}]])
+
+(test (parse-script `
+echo hi
+#! hi
+#\
+`)
+  @[[:source @[["echo hi" 1]]]
+    [:expectation
+     @{:err "hi" :explicit true :out ""}]])
 
 (test (parse-script `
 echo hi
@@ -106,10 +158,10 @@ echo hi
 `)
   @[[:source @[["echo hi" 1]]]
     [:expectation
-     @{:err @[" hello"]
+     @{:err "hello\n"
        :explicit true
-       :out @[" hi" " bye"]
-       :status @[" 0"]}]])
+       :out "hi\nbye\n"
+       :status "0"}]])
 
 (test (parse-script `
 echo hi
@@ -124,17 +176,15 @@ echo -n hello
   @[[:source
      @[["echo hi" 1] ["echo hello" 2]]]
     [:expectation
-     @{:err @[]
+     @{:err ""
        :explicit true
-       :out @[" hi" " hello"]
-       :status @[nil]}]
+       :out "hi\nhello\n"}]
     [:source
      @[["echo -n hi" 5] ["echo -n hello" 6]]]
     [:expectation
-     @{:err @[]
+     @{:err ""
        :explicit true
-       :out @[" hihello"]
-       :status @[nil]}]])
+       :out "hihello\n"}]])
 
 # each expectation gets a unique identifier
 
@@ -145,7 +195,7 @@ echo -n hello
 (defn compile-script [source separator]
   (var next-id 0)
   (def stanzas (parse-script source))
-  (array/push stanzas [:expectation (expectation/new :explicit false)])
+  (array/push stanzas [:expectation (expectation/implicit)])
 
   (def expectations @{})
   (def ordered @[])
@@ -195,20 +245,15 @@ echo -n hello
   (test ordered
     @["echo hi"
       "echo hello"
-      @{:err @[]
+      @{:err ""
         :explicit true
-        :out @[" hi" " hello"]
-        :status @[nil]}
+        :out "hi\nhello\n"}
       "echo -n hi"
       "echo -n hello"
-      @{:err @[]
+      @{:err ""
         :explicit true
-        :out @[" hihello"]
-        :status @[nil]}
-      @{:err @[]
-        :explicit false
-        :out @[]
-        :status @[nil]}]))
+        :out "hihello\n"}
+      @{:err "" :explicit false :out ""}]))
 
 (defn parse-actuals [separator output errput]
   (def results-peg (peg/compile ~(any (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))))
@@ -380,13 +425,6 @@ hello\n
           (xprint buf indentation "#-"))
         ))))
 
-(defmacro pop-while [stack predicate name & body]
-  (with-syms [$stack $predicate]
-    ~(let [,$stack ,stack ,$predicate ,predicate]
-      (while (and (not (empty? ,$stack)) (,$predicate (array/peek ,$stack)))
-        (def ,name (array/pop ,$stack))
-        ,;body))))
-
 (defn reconcile [source &named on-debug]
   (def separator (make-separator))
   (def {:expectations expectations
@@ -428,7 +466,7 @@ hello\n
             # TODO: check for duplicate status
             nil
             (do
-              (def expectation (expectation/new :explicit false))
+              (def expectation (expectation/implicit))
               (set new-expectation expectation)
               (put expectation :actual-status status)
               (array/push new-ordered expectation)))
