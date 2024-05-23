@@ -19,6 +19,7 @@ steno_log () {
 }
 
 `)
+(def postlude "\nwait")
 
 (def prelude-line-count (length (string/split "\n" prelude)))
 
@@ -422,6 +423,7 @@ echo -n hello
   # to read
   (ev/write source-writer prelude)
   (ev/write source-writer script)
+  (ev/write source-writer postlude)
   (ev/close source-writer)
 
   (await-exit proc)

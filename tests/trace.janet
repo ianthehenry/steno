@@ -17,6 +17,13 @@
     `)
     @[@[2 @[1]]]))
 
+(deftest "no error reports for async jobs"
+  (test (get-trace `
+    true &
+    false &
+    `)
+    @[]))
+
 (deftest "trace line numbers do not match source line numbers"
   (test (get-trace `
     true

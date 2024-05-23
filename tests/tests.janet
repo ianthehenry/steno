@@ -10,6 +10,15 @@
     #| hello
   `))
 
+(deftest "empty file"
+  (test-stdout (steno/reconcile "") `
+    
+  `))
+(deftest "nearly empty file"
+  (test-stdout (steno/reconcile "\n") `
+    
+    
+  `))
 
 (deftest "implicit expectation always inserted"
   (test-stdout (steno/reconcile "echo hello") `

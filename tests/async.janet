@@ -2,15 +2,43 @@
 (use ../src/util)
 (import ../src :as steno)
 
-# TODO: i think we need to block until all subprocesses complete.
-# either that or kill them. don't want to leave orphans around
 (deftest "async output gets collected in the final expectation"
   (test-stdout (steno/reconcile (unindent `
     echo hi
-    (sleep 1; echo bye) &
+    #|
+    (sleep 0; echo bye) &
     `)) `
     echo hi
-    (sleep 1; echo bye) &
     #| hi
+    (sleep 0; echo bye) &
+    #| bye
+    
+  `))
+
+(deftest "async errors aren't reported anywhere"
+  (test-stdout (steno/reconcile (unindent `
+    false &
+    echo hi
+    #|
+    (sleep 0; echo bye; false) &
+    `)) `
+    false &
+    echo hi
+    #| hi
+    (sleep 0; echo bye; false) &
+    #| bye
+    
+  `))
+
+(deftest "async output goes after the final non-empty line"
+  (test-stdout (steno/reconcile (unindent `
+    (sleep 0; echo bye; false) &
+    
+    
+    `)) `
+    (sleep 0; echo bye; false) &
+    #| bye
+    
+    
     
   `))
