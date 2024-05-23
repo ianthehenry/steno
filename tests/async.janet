@@ -15,6 +15,21 @@
     
   `))
 
+(deftest "final expectation can include sync and async output"
+  (test-stdout (steno/reconcile (unindent `
+    echo one
+    (sleep 0; echo three) &
+    echo two
+    `)) `
+    echo one
+    (sleep 0; echo three) &
+    echo two
+    #| one
+    #| two
+    #| three
+    
+  `))
+
 (deftest "async errors aren't reported anywhere"
   (test-stdout (steno/reconcile (unindent `
     false &
