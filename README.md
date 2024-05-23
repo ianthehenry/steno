@@ -1,5 +1,7 @@
 # Steno
 
+> Steno is not finished. It's not even particularly close to finished.
+
 Steno is a tool for snapshot-testing command-line interfaces. You give it a shell script, and it will record the output of every command that it runs:
 
 ```
@@ -229,4 +231,24 @@ You can also use `#~|` to see a "prettified" version of output, that replaces co
 
 # Background jobs
 
-Steno waits for all background jobs to complete before it exits (it adds an implicit `wait` to the end of your script). If you would instead like to kill processes, run `kill -p $$`.
+Steno waits for all background jobs to complete before it exits (it adds an implicit `wait` to the end of your script). If you would instead like to kill processes before you exit, you need to do that explicitly.
+
+TODO: figure out what the right default here is
+
+# Hacking
+
+Building Steno requires [Janet](https://github.com/janet-lang/janet) and [`jpm`](https://github.com/janet-lang/jpm).
+
+```
+$ jpm -l deps
+$ jpm -l build
+$ build/steno
+```
+
+Steno's tests are written with [Judge](https://github.com/ianthehenry/judge). I recommend running them interactively, with one of the following invocations (see `--help` for details)
+
+```
+$ jpm_tree/bin/judge
+$ jpm_tree/bin/judge -i
+$ jpm_tree/bin/judge -a
+```
