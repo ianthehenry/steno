@@ -111,3 +111,32 @@
     
   `)
   )
+
+# TODO: this isn't great
+(deftest "trailing backslashes can kinda screw things up"
+  (test-stdout (steno/reconcile (unindent `
+    echo \`)) `
+    echo \
+    #| printf \x28\xa7\xdb\x5d\xfd\xbc\x47\x9c\x00\x00\x00\x00
+  `))
+
+# this is worse, though
+(deftest "trailing backslashes can kinda screw things up"
+  (test-stdout (steno/reconcile (unindent `
+    echo \
+    #| \`)) `
+    echo \
+    #| printf \x3d\xb2\xfe\xa3\xde\x49\xb8\x11\x00\x00\x00\x00
+  `))
+
+(deftest "bash doesn't treat trealing backslashes in comments as significant"
+  (test-stdout (steno/reconcile (unindent `
+    echo 'for example \'
+    #| for example \
+    echo byee`)) `
+    echo 'for example \'
+    #| for example \
+    echo byee
+    #| byee
+  `))
+

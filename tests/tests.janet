@@ -10,15 +10,21 @@
     #| hello
   `))
 
+(defmacro get-out [expr]
+  (with-syms [$buf]
+    ~(let [,$buf @""]
+      (with-dyns [*out* ,$buf]
+        ,expr)
+      ,$buf)))
+
+# there appears to be a bug in judge -- almost certainly
+# related to janet's handling of terminal newlines in
+# backtick-quoted expressoins -- such that it can't
+# produce a stable expectation with test-stdout
 (deftest "empty file"
-  (test-stdout (steno/reconcile "") `
-    
-  `))
+  (test (get-out (steno/reconcile "")) @"\n"))
 (deftest "nearly empty file"
-  (test-stdout (steno/reconcile "\n") `
-    
-    
-  `))
+  (test (get-out (steno/reconcile "\n")) @"\n\n"))
 
 (deftest "implicit expectation always inserted"
   (test-stdout (steno/reconcile "echo hello") `
