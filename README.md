@@ -1,15 +1,47 @@
-Steno was directly inspired by and is very similar to [Cram](https://bitheap.org/cram/), an excellent tool for testing scripts and command-line interfaces.
+# Steno
 
-The main reason I wrote Steno when Cram already exists is that Cram is a Python script, and using it requires a working Python installation. Steno, in contrast, is distributed as a native binary whose only dependency is `libc`. But there are more differences:
+Steno is a tool for snapshot-testing command-line interfaces. You give it a shell script, and it will record the output of every command that it runs:
+
+```
+$ cat example.steno
+```
+
+```bash
+echo hello
+```
+
+```
+$ steno
+TODO: output example
+```
+
+```
+$ cat example.steno.corrected
+```
+
+```bash
+echo hello
+#| hello
+```
+
+Output appears in specially-formatted comment blocks just below the command that produced it.
+
+# Steno and Cram
+
+Steno was directly inspired by [Cram](https://bitheap.org/cram/), an excellent tool for testing scripts and command-line interfaces.
+
+The main reason I wrote Steno when Cram already exists is that Cram is a Python program, and running it requires a working Python installation. But Steno is a [Janet](https://janet-lang.org/) program, and you can run it as a native binary even if you've never heard of Janet before.
+
+But there are more differences:
 
 - Steno files are just shell scripts.
     - This means you can syntax highlight them normally, and even execute them without Steno installed at all.
     - Cram requires that you delimit each individual command in separate `$`/`>` blocks. Steno doesn't.
     - Instead, Steno uses specially-formatted comments to indicate output.
 - Steno differentiates between stdout and stderr in its output.
-- Steno does not have built-in `(regex)` or `(glob)` fuzzy matchers.
+- Steno does not have anything like Cram's `(regex)` or `(glob)` fuzzy matchers. You can achieve the same thing by piping output through `sed`, but I'm not opposed to adding them -- I've just never used them.
 - Steno scripts are always `bash` scripts; you cannot configure the shell you use like you can in Cram.
-    - Steno uses the non-portable `PIPESTATUS` to report multiple exit codes.
+    - Steno uses some Bash-specific features, like `PIPESTATUS`, to report multiple exit codes.
 
 # Example
 
@@ -52,7 +84,7 @@ true
 #-
 ```
 
-Steno will only write `#-` if there is an expectation at that position in its input. Steno will never forget "checkpoints."
+Steno will only write `#-` if there is an expectation at that position in its input. This means that on subsequent runs -- where there might be output -- Steno will not have forgetten that you wanted a "checkpoint" there.
 
 # Exit codes
 
@@ -135,9 +167,25 @@ Gets into an infinite loop.
 
 This shouldn't really matter in practice, but if a script behaves differently under Bash and Steno, this is likely the reason.
 
+Another gotcha is Steno's handling of terminal backslashes. A script like this:
+
+```bash
+echo hello \
+#| hello
+```
+
+Will produce nonsense, because that compiles to something like this:
+
+```bash
+echo hello \
+printf '<special output delimiter>'
+```
+
+Although Steno could detect and ignore these, I've decided not to do anything for now as that might not be the intended fix.
+
 # Misc notes
 
-Steno doesn't interleave `stderr` and `stdout`. `stderr` always appears first, followed by `stdout`. It doesn't matter in what order your program flushes writes to the file descriptors.
+Steno doesn't interleave `stdout` and `stderr`. `stdout` always appears first, followed by `stderr`, followed by the exit status. It doesn't matter in what order your program flushes writes to the file descriptors.
 
 # Unimplemented ideas
 
@@ -178,3 +226,7 @@ You can also use `#~|` to see a "prettified" version of output, that replaces co
 ```
 
 (You can also use `#=!` for exact stderr.)
+
+# Background jobs
+
+Steno waits for all background jobs to complete before it exits (it adds an implicit `wait` to the end of your script). If you would instead like to kill processes, run `kill -p $$`.
