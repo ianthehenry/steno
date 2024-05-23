@@ -9,10 +9,17 @@
 # or maybe it should only be printf? not sure
 (def prelude `
 BASH_XTRACEFD=$STENO_DEBUG_FD
-steno_error () {
-  printf '%s %s\0' "$1" "$2" >&$STENO_TRACE_FD
+steno_error_index=$STENO_NEXPECTATION_ID
+_steno_i32_le () {
+  printf "%.8x" "$1" | xxd -p -r | rev | tr -d '\n'
 }
-trap 'steno_error "$LINENO" "${PIPESTATUS[*]}"' ERR
+_steno_error () {
+  printf "%s" "$STENO_SEPARATOR_HEX" | xxd -p -r | tee /dev/stderr
+  _steno_i32_le "$steno_error_index" | tee /dev/stderr
+  printf '%s %s %s\0' "$1" "$steno_error_index" "$2" >&$STENO_TRACE_FD
+  steno_error_index=$((steno_error_index + 1))
+}
+trap '_steno_error "$LINENO" "${PIPESTATUS[*]}"' ERR
 
 steno_log () {
   echo >&$STENO_DEBUG_FD "$@"
@@ -191,8 +198,10 @@ echo -n hello
 
 # each expectation gets a unique identifier
 
+(defn to-hex [bytes] (string/join (seq [byte :in bytes] (string/format "%02x" byte))))
 (defn escape-bytes [bytes] (string/join (seq [byte :in bytes] (string/format "\\x%02x" byte))))
 
+(test (to-hex "\x01\x02\x03") "010203")
 (test (escape-bytes "\x01\x02\x03") "\\x01\\x02\\x03")
 
 (defn empty-line? [line]
@@ -318,13 +327,21 @@ echo -n hello
     :properly-tagged (any (/ (* '(to ,separator) ,separator (uint 4)) ,|[$1 $0]))
     :residue (+ -1 (/ '(to -1) ,|[:residue $0]))}))
   (def results @{})
-  (defn get-result [tag]
-    (get-or-put results tag {:errs @[] :outs @[]}))
-  (each [tag text] (peg/match results-peg output)
-    (table/push (get-result tag) :outs text))
-  (each [tag text] (peg/match results-peg errput)
-    (table/push (get-result tag) :errs text))
-  results)
+  (defn get-result [id]
+    (get-or-put results id {:errs @[] :outs @[]}))
+  # We basically want a table that remembers the insertion order of its keys.
+  # Might be neater if we just made a helper module for that.
+  (def ids @[])
+  (def ids-seen @{})
+  (def outs (peg/match results-peg output))
+  (def errs (peg/match results-peg errput))
+  (each [id _] outs (unless (in ids-seen id) (put ids-seen id true) (array/push ids id)))
+  # I don't think you should ever see an ID on stderr without first
+  # seeing it on stdout, but just in case...
+  (each [id _] errs (unless (in ids-seen id) (put ids-seen id true) (array/push ids id)))
+  (each [id text] outs (table/push (get-result id) :outs text))
+  (each [id text] errs (table/push (get-result id) :errs text))
+  [ids results])
 
 (test (parse-actuals "<sep>" (unindent "
   hi\n
@@ -332,8 +349,9 @@ echo -n hello
   <sep>\x00\x00\x00\x00bye then\n
   <sep>\x01\x00\x00\x00")
   "<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00")
-  @{0 {:errs @[""] :outs @["hi\nhello\n"]}
-    1 {:errs @[""] :outs @["bye then\n"]}})
+  [@[0 1]
+   @{0 {:errs @[""] :outs @["hi\nhello\n"]}
+     1 {:errs @[""] :outs @["bye then\n"]}}])
 
 (deftest "parse-actuals includes trailing output in the final expectation"
   (test (parse-actuals "<sep>" (unindent "
@@ -343,10 +361,11 @@ echo -n hello
     <sep>\x01\x00\x00\x00excess\n
     words")
   "<sep>\x00\x00\x00\x00<sep>\x01\x00\x00\x00trailing")
-    @{0 {:errs @[""] :outs @["hi\nhello\n"]}
-      1 {:errs @[""] :outs @["bye then\n"]}
-      :residue {:errs @["trailing"]
-                :outs @["excess\nwords"]}}))
+    [@[0 1 :residue]
+     @{0 {:errs @[""] :outs @["hi\nhello\n"]}
+       1 {:errs @[""] :outs @["bye then\n"]}
+       :residue {:errs @["trailing"]
+                 :outs @["excess\nwords"]}}]))
 
 # TODO: these line numbers are based on the compiled script,
 # which has erased certain comments. It's not clear to me yet
@@ -354,31 +373,30 @@ echo -n hello
 # Definitely not?
 (def trace-peg (peg/compile ~{
   :main (any (* (group :line) "\0"))
-  :line (* :line-number " " (sub (to "\0") :pipe-status))
+  :line (* :line-number " " :id " " (sub (to "\0") :pipe-status))
   :line-number (/ :int ,|(- $ prelude-line-count -1))
+  :id :int
   :pipe-status (group (split " " :int))
   :int (number :d+)
   }))
 (defn parse-trace-output [trace-output]
   (peg/match trace-peg trace-output))
 
-(def trace-output-example @"15 1\022 1\022 1\027 1\027 1\030 1 2 0 3\030 1 2 0 3\031 0 1 2 0\0")
+(def trace-output-example @"15 10 1\022 11 1\030 12 1 2 0 3\030 13 1 2 0 3\0")
 (test (parse-trace-output trace-output-example)
-  @[@[6 @[1]]
-    @[13 @[1]]
-    @[13 @[1]]
-    @[18 @[1]]
-    @[18 @[1]]
-    @[21 @[1 2 0 3]]
-    @[21 @[1 2 0 3]]
-    @[22 @[0 1 2 0]]])
+  @[@[-1 10 @[1]]
+    @[6 11 @[1]]
+    @[14 12 @[1 2 0 3]]
+    @[14 13 @[1 2 0 3]]])
 
 (defn await-exit [proc]
   (while (= nil (proc :exit-code))
     (ev/sleep 0.001)))
 
-(defn transcribe [script &named on-debug]
+(defn transcribe [script &named on-debug separator next-id]
   (default on-debug ignore)
+  (default next-id 0)
+  (default separator "")
   (def [source-reader source-writer] (posix-spawn/pipe :write-stream))
   (def [stdout-reader stdout-writer] (posix-spawn/pipe :read-stream))
   (def [stderr-reader stderr-writer] (posix-spawn/pipe :read-stream))
@@ -389,8 +407,14 @@ echo -n hello
   (def trace-fd (posix-spawn/fd trace-writer))
   (def debug-fd (posix-spawn/fd debug-writer))
 
+  # TODO: we could just dynamically generate the prelude
+  # instead of passing these as environment variables...
+  # make them uninheritable, and it'll let us delete (to-hex)
   (def env @{"STENO_DEBUG_FD" (string debug-fd)
-             "STENO_TRACE_FD" (string trace-fd)})
+             "STENO_TRACE_FD" (string trace-fd)
+             "STENO_NEXPECTATION_ID" (string next-id)
+             "STENO_SEPARATOR_HEX" (to-hex separator)})
+
   # TODO: should we filter what we inherit? what does cram do?
   (def inherit-env (os/environ))
   (table/setproto env inherit-env)
@@ -481,20 +505,15 @@ echo -n hello
   (def {:stdout-buf stdout-buf
         :stderr-buf stderr-buf
         :trace-buf trace-buf}
-    (transcribe (string/join compiled-script-lines "\n") :on-debug on-debug))
+    (transcribe (string/join compiled-script-lines "\n")
+      :on-debug on-debug
+      :separator separator
+      :next-id (inc (max-of (keys expectations)))))
 
-  (def actual (parse-actuals separator stdout-buf stderr-buf))
+  (def [actual-ids actual] (parse-actuals separator stdout-buf stderr-buf))
   (def traced (parse-trace-output trace-buf))
 
   (def final-expectation (assert (find-last |(not (string? $)) ordered) "BUG: script with no expectation"))
-
-  (eachp [id {:errs errs :outs outs}] actual
-    (def expectation (if (= id :residue)
-      final-expectation
-      (assert (in expectations id) "BUG: unknown expectation ID")))
-    # TODO: this should really fail with a better error message
-    (put expectation :actual-out (unique outs))
-    (put expectation :actual-err (unique errs)))
 
   # TODO: we should check for duplicate expectations now,
   # and remove the new-expectation de-duping stuff. this way
@@ -507,18 +526,39 @@ echo -n hello
   (def new-ordered @[])
   (eachp [i element] ordered
     (var new-expectation nil)
-    (pop-while traced |(= i (first $)) [_ status]
-      (pat/match element
-        |string? (if new-expectation
-            # TODO: check for duplicate status
-            nil
+    (pop-while traced |(= i (first $)) [_ id status]
+      (put expectations id
+        (pat/match element
+          |string? (or new-expectation
             (do
               (def expectation (expectation/implicit))
               (set new-expectation expectation)
               (put expectation :actual-status status)
-              (array/push new-ordered expectation)))
-        expectation (put expectation :actual-status status)))
+              (array/push new-ordered expectation)
+              expectation))
+          expectation (do
+            (put expectation :actual-status status)
+            expectation))))
     (array/push new-ordered element))
+
+  # so now there's a weird issue where, basically,
+  # multiple IDs point to the same actual expectation.
+  # so this tells us output by ID, but really we want
+  # to ensure uniqueness by expectation.
+  (loop [id :in actual-ids :let [{:outs outs :errs errs} (in actual id)]]
+    (def expectation (if (= id :residue)
+      final-expectation
+      (assert (in expectations id) (string/format "BUG: unknown expectation ID %d" id))))
+
+    # we can have multiple IDs pointing to the same expectation, in the case of
+    # errors or residue. if we encounter from multiple sources, it's not exactly
+    # a conflicting report, but rather a case of "and also here's this." So we
+    # append the output on. But... this is actually kind of terrible, because of
+    # the iteration order.
+
+    # TODO: uniqueness failure should fail with a better error message
+    (table/append-str expectation :actual-out (unique outs))
+    (table/append-str expectation :actual-err (unique errs)))
 
   (def buf @"")
   (render new-ordered buf)

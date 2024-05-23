@@ -16,10 +16,10 @@
       `)
     (in :trace-buf)
     steno/parse-trace-output)
-    @[@[1 @[1 2]]
-      @[1 @[1 2]]
-      @[2 @[1 1]]
-      @[2 @[1 1]]]))
+    @[@[1 0 @[1 2]]
+      @[1 1 @[1 2]]
+      @[2 2 @[1 1]]
+      @[2 3 @[1 1]]]))
 
 (deftest "failing statements get status expectations, even if they didn't exist"
   (test-stdout (steno/reconcile (unindent `
@@ -44,4 +44,28 @@
     false
     #? 1
     
+  `))
+
+(deftest "status expectations are erased if there is no error"
+  (test-stdout (steno/reconcile (unindent `
+    true
+    #? 1`)) `
+    true
+    #-
+  `))
+
+(deftest "implicit status expectations still capture error"
+  (test-stdout (steno/reconcile (unindent `
+    echo stderr >&2
+    echo stdout
+    false
+    echo fine`)) `
+    echo stderr >&2
+    echo stdout
+    false
+    #| stdout
+    #! stderr
+    #? 1
+    echo fine
+    #| fine
   `))

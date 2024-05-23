@@ -3,10 +3,10 @@
 (import ../src :as steno)
 
 (deftest "transcribe"
-  (test (steno/transcribe "echo stdout; echo stderr >&2; false")
-    {:stderr-buf @"stderr\n"
-     :stdout-buf @"stdout\n"
-     :trace-buf @"10 1\0"}))
+  (test (steno/transcribe "echo stdout; echo stderr >&2; false" :separator "\xff" :next-id 16)
+    {:stderr-buf @"stderr\n\xFF\x10\0\0\0"
+     :stdout-buf @"stdout\n\xFF\x10\0\0\0"
+     :trace-buf @"17 16 1\0"}))
 
 (deftest "transcribe redirects stdout properly"
   (test (steno/transcribe "echo stdout >/dev/stdout")

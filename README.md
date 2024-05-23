@@ -4,29 +4,40 @@
 
 Steno is a tool for snapshot-testing command-line interfaces. You give it a shell script, and it will record the output of every command that it runs:
 
-```
-$ cat example.steno
-```
-
 ```bash
+# example.steno
 echo hello
+echo world
 ```
 
 ```
 $ steno
-TODO: output example
-```
-
-```
-$ cat example.steno.corrected
 ```
 
 ```bash
+# example.steno.corrected
 echo hello
+echo world
 #| hello
+#| world
 ```
 
-Output appears in specially-formatted comment blocks just below the command that produced it.
+Output appears in specially-formatted comment blocks at the end of the script. If you want to put the output closer to the command, you can add an empty `#|` block. This will cause Steno to fill in the output as of this point, then keep going with the rest of the script. For example:
+
+```bash
+# example.steno
+echo hello
+#|
+echo world
+```
+
+```bash
+# example.steno.corrected
+echo hello
+#| hello
+echo world
+#| world
+```
 
 # Steno and Cram
 
@@ -45,24 +56,6 @@ But there are more differences:
 - Steno scripts are always `bash` scripts; you cannot configure the shell you use like you can in Cram.
     - Steno uses some Bash-specific features, like `PIPESTATUS`, to report multiple exit codes.
 
-# Example
-
-This is a very boring example:
-
-```
-# example.steno
-echo hi
-```
-
-```
-$ steno example.steno
-```
-
-```
-echo hi
-#| hi
-```
-
 # Special comments
 
 ```
@@ -70,7 +63,7 @@ echo hi
 #! text   - stderr
 #? 1      - exit code
 #? 1 0 1  - multiple exit codes can follow pipes
-#\        - indicates no final newline on the previous #| or #! block
+#\        - indicates no final newline on the prrrevious #| or #! block
 #-        - indicates that there is no output
 ```
 

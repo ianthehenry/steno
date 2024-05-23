@@ -37,6 +37,9 @@
     (array/push arr v)
     (put t k @[v])))
 
+(defn table/append-str [t k v]
+  (put t k (string (in t k "") v)))
+
 (deftest "table/push"
   (def t @{})
   (table/push t :foo 1)
@@ -108,3 +111,10 @@
 
 (test (find odd? [1 2 3 4]) 1)
 (test (find-last odd? [1 2 3 4]) 3)
+
+(defmacro get-stdout [expr]
+  (with-syms [$buf]
+    ~(let [,$buf @""]
+      (with-dyns [*out* ,$buf]
+        ,expr)
+      ,$buf)))
